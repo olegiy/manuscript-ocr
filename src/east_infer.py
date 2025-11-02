@@ -1,7 +1,7 @@
 from manuscript.detectors import EAST
 
 # Model initialization
-model = EAST()
+model = EAST(device="cuda")
 
 # Path to the image
 img_path = r"C:\Users\pasha\OneDrive\Рабочий стол\scale_1200.png"
