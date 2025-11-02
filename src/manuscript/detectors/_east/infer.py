@@ -30,10 +30,11 @@ class EAST:
         weights_path: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
         target_size: int = 1280,
-        expand_ratio_w: float = 0.7,
-        expand_ratio_h: float = 0.7,
+        expand_ratio_w: float = 1.7,
+        expand_ratio_h: float = 1.7,
+        expand_power: float = 0.5,
         score_thresh: float = 0.7,
-        iou_threshold: float = 0.1,
+        iou_threshold: float = 0.15,
         score_geo_scale: float = 0.25,
         quantization: int = 2,
         axis_aligned_output: bool = True,
@@ -57,15 +58,21 @@ class EAST:
             ``(target_size, target_size)``. Default is 1280.
         expand_ratio_w : float, optional
             Horizontal expansion factor applied to detected boxes after NMS.
-            Default is 0.9.
+            Default is 0.7.
         expand_ratio_h : float, optional
             Vertical expansion factor applied to detected boxes after NMS.
-            Default is 0.9.
+            Default is 0.7.
+        expand_power : float, optional
+            Power for non-linear box expansion. Controls how expansion scales with box size.
+            - 1.0 = linear (small and large boxes expand equally)
+            - <1.0 = small boxes expand more (e.g., 0.5, recommended for character-level detection)
+            - >1.0 = large boxes expand more
+            Default is 0.5.
         score_thresh : float, optional
             Confidence threshold for selecting candidate detections before NMS.
-            Default is 0.6.
+            Default is 0.7.
         iou_threshold : float, optional
-            IoU threshold for locality-aware NMS. Default is 0.2.
+            IoU threshold for locality-aware NMS. Default is 0.1.
         score_geo_scale : float, optional
             Scale factor for decoding geometry/score maps. Default is 0.25.
         quantization : int, optional
@@ -76,7 +83,7 @@ class EAST:
             Default is True.
         remove_area_anomalies : bool, optional
             If True, removes quads with extremely large area relative to the
-            distribution. Default is True.
+            distribution. Default is False.
         anomaly_sigma_threshold : float, optional
             Sigma threshold for anomaly area filtering. Default is 5.0.
         anomaly_min_box_count : int, optional
@@ -123,6 +130,7 @@ class EAST:
         self.score_geo_scale = score_geo_scale
         self.expand_ratio_w = expand_ratio_w
         self.expand_ratio_h = expand_ratio_h
+        self.expand_power = expand_power
         self.score_thresh = score_thresh
         self.iou_threshold = iou_threshold
         self.quantization = quantization
@@ -337,9 +345,12 @@ class EAST:
             print(f"  NMS: {time.time() - t0:.3f}s")
             print(f"    Boxes after NMS: {len(final_quads_nms)}")
 
-        # 6) Expand (inverse shrink)
+        # 6) Expand (inverse shrink) with non-linear scaling
         final_quads_nms_expanded = expand_boxes(
-            final_quads_nms, expand_w=self.expand_ratio_w, expand_h=self.expand_ratio_h
+            final_quads_nms,
+            expand_w=self.expand_ratio_w,
+            expand_h=self.expand_ratio_h,
+            expand_power=self.expand_power,
         )
 
         # 7) Scale coordinates back to original image size

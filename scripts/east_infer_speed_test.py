@@ -13,7 +13,7 @@ Usage:
 
     # Скорость + точность
     python scripts/east_infer_speed_test.py --folder path/to/images --annotations path/to/annotations.json
-    python scripts/east_infer_speed_test.py --folder "C:\shared\data02065\Archives020525\test_images" --annotations ""C:\shared\data02065\Archives020525\test.json""
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data02065\Archives020525\test_images" --annotations "C:\shared\data02065\Archives020525\test.json" --gpu-only
 
     # С кастомными параметрами
     python scripts/east_infer_speed_test.py --folder "C:\shared\data02065\Archives020525\test_images" --target-size 1280

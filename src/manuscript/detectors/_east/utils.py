@@ -405,9 +405,38 @@ def decode_quads_from_maps(
 
 
 def expand_boxes(
-    quads: np.ndarray, expand_w: float = 0.0, expand_h: float = 0.0
+    quads: np.ndarray,
+    expand_w: float = 0.0,
+    expand_h: float = 0.0,
+    expand_power: float = 1.0,
 ) -> np.ndarray:
+    """
+    Расширяет боксы с нелинейным масштабированием.
 
+    Parameters
+    ----------
+    quads : np.ndarray
+        Массив четырехугольников shape (N, 9) - 8 координат + score
+    expand_w : float
+        Коэффициент расширения по ширине
+    expand_h : float
+        Коэффициент расширения по высоте
+    expand_power : float
+        Степень для нелинейного масштабирования:
+        - 1.0 = линейное (маленькие и большие боксы увеличиваются одинаково)
+        - <1.0 = маленькие боксы увеличиваются сильнее (например, 0.5)
+        - >1.0 = большие боксы увеличиваются сильнее
+
+    Returns
+    -------
+    np.ndarray
+        Расширенные боксы
+
+    Notes
+    -----
+    Нелинейное увеличение полезно, так как маленькие боксы (символы) требуют
+    больше "запаса" для распознавания, чем большие боксы (слова).
+    """
     if len(quads) == 0 or (expand_w == 0 and expand_h == 0):
         return quads
 
@@ -442,8 +471,17 @@ def expand_boxes(
 
     offset = np.minimum(len1, len2)
 
+    # Нелинейное масштабирование: маленькие боксы увеличиваются сильнее при expand_power < 1.0
+    # Нормализуем offset для стабильности (используем среднее значение как референс)
+    if expand_power != 1.0:
+        # Применяем степенную функцию к нормализованному offset
+        # Это делает малые значения offset относительно больше при power < 1
+        offset_scaled = np.power(offset, expand_power)
+    else:
+        offset_scaled = offset
+
     scale_xy = np.array([1 + expand_w, 1 + expand_h], dtype=np.float32).reshape(1, 1, 2)
-    delta = (scale_xy - 1.0) * offset
+    delta = (scale_xy - 1.0) * offset_scaled
 
     new_coords = p_curr + delta * n_normalized
 

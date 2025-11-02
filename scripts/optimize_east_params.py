@@ -18,8 +18,9 @@ import argparse
 import sys
 import json
 import random
+import hashlib
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import numpy as np
 import torch
@@ -31,6 +32,163 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from manuscript.detectors import EAST
 from manuscript.detectors._east.utils import evaluate_dataset
+
+
+# ============================================================================
+# ГЛОБАЛЬНЫЕ НАСТРОЙКИ ОПТИМИЗАЦИИ
+# ============================================================================
+# Определяет какие параметры оптимизируются, а какие фиксированы
+
+OPTIMIZATION_CONFIG = {
+    # Параметры для оптимизации (True = оптимизируется, False = фиксированное значение)
+    "optimize": {
+        "expand_ratio_w": False,
+        "expand_ratio_h": False,
+        "expand_power": False,
+        "score_thresh": False,
+        "iou_threshold": True,
+        "quantization": False,
+        "remove_area_anomalies": False,  # Фиксируем как False
+    },
+    # Фиксированные значения (используются когда optimize = False)
+    "fixed_values": {
+        "expand_ratio_w": 1.7,
+        "expand_ratio_h": 1.7,
+        "expand_power": 0.5,
+        "score_thresh": 0.7,
+        "iou_threshold": 0.2,
+        "quantization": 2,
+        "remove_area_anomalies": False,
+    },
+    # Диапазоны для оптимизации (используются когда optimize = True)
+    "ranges": {
+        "expand_ratio_w": (0.3, 2.0, 0.1),  # (min, max, step)
+        "expand_ratio_h": (0.3, 2.0, 0.1),
+        "expand_power": (0.1, 2.0, 0.1),
+        "score_thresh": (0.5, 0.8, 0.1),
+        "iou_threshold": (0.05, 0.6, 0.05),
+        "quantization": [1, 2, 4],  # categorical
+        "remove_area_anomalies": [True, False],  # categorical
+    },
+}
+
+
+# Глобальный кеш для хранения результатов уже вычисленных параметров
+PARAMS_CACHE: Dict[str, float] = {}
+
+
+def params_to_hash(params: Dict[str, Any]) -> str:
+    """
+    Создает хеш из параметров для кеширования.
+
+    Parameters
+    ----------
+    params : dict
+        Словарь параметров
+
+    Returns
+    -------
+    str
+        MD5 хеш параметров
+    """
+    # Сортируем ключи для консистентности
+    sorted_params = {k: params[k] for k in sorted(params.keys())}
+    params_str = json.dumps(sorted_params, sort_keys=True)
+    return hashlib.md5(params_str.encode()).hexdigest()
+
+
+def get_cached_score(params: Dict[str, Any]) -> Optional[float]:
+    """
+    Получает закешированный score для параметров.
+
+    Parameters
+    ----------
+    params : dict
+        Словарь параметров
+
+    Returns
+    -------
+    float or None
+        Закешированный score или None если не найден
+    """
+    params_hash = params_to_hash(params)
+    return PARAMS_CACHE.get(params_hash)
+
+
+def cache_score(params: Dict[str, Any], score: float) -> None:
+    """
+    Кеширует score для параметров.
+
+    Parameters
+    ----------
+    params : dict
+        Словарь параметров
+    score : float
+        Полученный score
+    """
+    params_hash = params_to_hash(params)
+    PARAMS_CACHE[params_hash] = score
+
+
+def save_cache(cache_file: str) -> None:
+    """
+    Сохраняет кеш в файл.
+
+    Parameters
+    ----------
+    cache_file : str
+        Путь к файлу для сохранения кеша
+    """
+    cache_data = {
+        "cache": PARAMS_CACHE,
+        "config": OPTIMIZATION_CONFIG,
+    }
+
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(cache_data, f, indent=2)
+
+    print(f"Cache saved to {cache_file} ({len(PARAMS_CACHE)} entries)")
+
+
+def load_cache(cache_file: str) -> int:
+    """
+    Загружает кеш из файла.
+
+    Parameters
+    ----------
+    cache_file : str
+        Путь к файлу кеша
+
+    Returns
+    -------
+    int
+        Количество загруженных записей
+    """
+    global PARAMS_CACHE
+
+    if not Path(cache_file).exists():
+        print(f"Cache file not found: {cache_file}")
+        return 0
+
+    with open(cache_file, "r", encoding="utf-8") as f:
+        cache_data = json.load(f)
+
+    PARAMS_CACHE = cache_data.get("cache", {})
+
+    print(f"Cache loaded from {cache_file} ({len(PARAMS_CACHE)} entries)")
+
+    # Проверяем совместимость конфигурации
+    saved_config = cache_data.get("config")
+    if saved_config and saved_config != OPTIMIZATION_CONFIG:
+        print("WARNING: Cached configuration differs from current OPTIMIZATION_CONFIG!")
+        print("Consider clearing cache if optimization ranges have changed.")
+
+    return len(PARAMS_CACHE)
+
+
+# ============================================================================
+# ОСНОВНЫЕ ФУНКЦИИ
+# ============================================================================
 
 
 def get_image_files(folder: str) -> List[str]:
@@ -109,6 +267,7 @@ def evaluate_params(
         target_size=target_size,
         expand_ratio_w=params["expand_ratio_w"],
         expand_ratio_h=params["expand_ratio_h"],
+        expand_power=params["expand_power"],
         score_thresh=params["score_thresh"],
         iou_threshold=params["iou_threshold"],
         quantization=params["quantization"],
@@ -143,7 +302,7 @@ def evaluate_params(
 
     # Оцениваем метрики только на обработанных изображениях
     # Используем параллельную обработку для ускорения (n_jobs=None = все CPU)
-    metrics = evaluate_dataset(predictions, gt_subset, verbose=False, n_jobs=None)
+    metrics = evaluate_dataset(predictions, gt_subset, verbose=False, n_jobs=1)
 
     return metrics["f1@0.5:0.95"]
 
@@ -165,25 +324,54 @@ def create_objective(
 
     def objective(trial: optuna.Trial) -> float:
         """Objective функция для Optuna optimization."""
-        # Предлагаем параметры
-        params = {
-            "expand_ratio_w": trial.suggest_float("expand_ratio_w", 0.7, 1.0, step=0.1),
-            "expand_ratio_h": trial.suggest_float("expand_ratio_h", 0.7, 1.0, step=0.1),
-            "score_thresh": trial.suggest_float("score_thresh", 0.5, 0.8, step=0.1),
-            "iou_threshold": trial.suggest_float("iou_threshold", 0.1, 0.3, step=0.1),
-            "quantization": trial.suggest_categorical("quantization", [1, 2, 4]),
-            "remove_area_anomalies": trial.suggest_categorical(
-                "remove_area_anomalies", [True, False]
-            ),
-        }
+        # Собираем параметры: оптимизируемые + фиксированные
+        params = {}
 
+        for param_name, should_optimize in OPTIMIZATION_CONFIG["optimize"].items():
+            if should_optimize:
+                # Оптимизируем параметр
+                param_range = OPTIMIZATION_CONFIG["ranges"][param_name]
+
+                if isinstance(param_range, list):
+                    # Categorical параметр
+                    params[param_name] = trial.suggest_categorical(
+                        param_name, param_range
+                    )
+                else:
+                    # Float параметр с диапазоном
+                    min_val, max_val, step = param_range
+                    params[param_name] = trial.suggest_float(
+                        param_name, min_val, max_val, step=step
+                    )
+            else:
+                # Используем фиксированное значение
+                params[param_name] = OPTIMIZATION_CONFIG["fixed_values"][param_name]
+
+        # Проверяем кеш
+        cached_score = get_cached_score(params)
+        if cached_score is not None:
+            print(
+                f"\n  [CACHE HIT] Trial {trial.number}: Using cached score {cached_score:.4f}"
+            )
+            print(f"    Params: {params}")
+            return cached_score
+
+        # Вычисляем score
         try:
             score = evaluate_params(
                 image_files, ground_truths, params, device, target_size
             )
+
+            # Кешируем результат
+            cache_score(params, score)
+
+            print(f"\n  [COMPUTED] Trial {trial.number}: F1@0.5:0.95 = {score:.4f}")
+            print(f"    Params: {params}")
+
             return score
         except Exception as e:
-            print(f"\nError with params {params}: {e}")
+            print(f"\n  [ERROR] Trial {trial.number}: {e}")
+            print(f"    Params: {params}")
             return 0.0
 
     return objective
@@ -205,10 +393,27 @@ def optimize_with_optuna(
     dict
         Результаты: лучшие параметры, лучшая метрика, история всех trials
     """
+    print("=" * 80)
+    print("OPTIMIZATION CONFIGURATION")
+    print("=" * 80)
+    print("\nOptimized parameters:")
+    for param, is_opt in OPTIMIZATION_CONFIG["optimize"].items():
+        if is_opt:
+            range_val = OPTIMIZATION_CONFIG["ranges"][param]
+            print(f"  ✓ {param:25s}: {range_val}")
+
+    print("\nFixed parameters:")
+    for param, is_opt in OPTIMIZATION_CONFIG["optimize"].items():
+        if not is_opt:
+            fixed_val = OPTIMIZATION_CONFIG["fixed_values"][param]
+            print(f"  • {param:25s}: {fixed_val}")
+
+    print("\n" + "=" * 80)
     print(f"Starting Optuna optimization with {n_trials} trials")
     print(f"Testing on {len(image_files)} images")
     print(f"Images with annotations: {len(ground_truths)}")
-    print()
+    print(f"Cache size at start: {len(PARAMS_CACHE)} entries")
+    print("=" * 80 + "\n")
 
     # Создаем study с TPE sampler
     sampler = TPESampler(seed=seed)
@@ -229,21 +434,55 @@ def optimize_with_optuna(
 
     # История всех trials
     history = []
+    cache_hits = 0
     for trial in study.trials:
         if trial.state == optuna.trial.TrialState.COMPLETE:
+            # Проверяем был ли это cache hit
+            trial_params = {k: v for k, v in trial.params.items()}
+            # Добавляем фиксированные параметры
+            for param_name, should_optimize in OPTIMIZATION_CONFIG["optimize"].items():
+                if not should_optimize:
+                    trial_params[param_name] = OPTIMIZATION_CONFIG["fixed_values"][
+                        param_name
+                    ]
+
             history.append(
                 {
                     "trial_number": trial.number,
                     "params": trial.params,
+                    "all_params": trial_params,
                     "f1_score": trial.value,
                 }
             )
+
+    print("\n" + "=" * 80)
+    print("OPTIMIZATION RESULTS")
+    print("=" * 80)
+    print(f"\nTotal trials: {len(study.trials)}")
+    print(f"Cache entries created: {len(PARAMS_CACHE)}")
+    print(
+        f"Cache hit rate: {(len(study.trials) - len(PARAMS_CACHE)) / len(study.trials) * 100:.1f}%"
+    )
+    print(f"\nBest F1@0.5:0.95: {best_score:.4f}")
+    print(f"\nBest parameters:")
+    for param, value in best_params.items():
+        print(f"  {param:25s}: {value}")
+
+    # Показываем также фиксированные параметры
+    print(f"\nFixed parameters (not optimized):")
+    for param, is_opt in OPTIMIZATION_CONFIG["optimize"].items():
+        if not is_opt:
+            fixed_val = OPTIMIZATION_CONFIG["fixed_values"][param]
+            print(f"  {param:25s}: {fixed_val}")
+
+    print("=" * 80 + "\n")
 
     return {
         "best_params": best_params,
         "best_score": best_score,
         "history": history,
         "n_trials": len(study.trials),
+        "cache_size": len(PARAMS_CACHE),
         "study": study,
     }
 
@@ -296,6 +535,12 @@ def main():
         help="Save results to JSON file (default: optimization_results.json)",
     )
     parser.add_argument(
+        "--cache",
+        type=str,
+        default=None,
+        help="Cache file for storing/loading computed scores (optional)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -310,6 +555,10 @@ def main():
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
+
+    # Загружаем кеш если указан
+    if args.cache:
+        load_cache(args.cache)
 
     # Проверяем папку
     if not Path(args.folder).exists():
@@ -353,6 +602,10 @@ def main():
         target_size=args.target_size,
         seed=args.seed,
     )
+
+    # Сохраняем кеш если указан
+    if args.cache:
+        save_cache(args.cache)
 
     # Выводим результаты
     print("\n" + "=" * 60)
