@@ -34,7 +34,7 @@ class EAST:
         expand_ratio_h: float = 1.7,
         expand_power: float = 0.5,
         score_thresh: float = 0.7,
-        iou_threshold: float = 0.15,
+        iou_threshold: float = 0.2,
         score_geo_scale: float = 0.25,
         quantization: int = 2,
         axis_aligned_output: bool = True,

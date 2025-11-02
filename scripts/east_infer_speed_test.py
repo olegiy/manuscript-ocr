@@ -188,11 +188,7 @@ def benchmark_device(
 
     # Создаём детектор
     print(f"Initializing EAST detector on {device}...")
-    detector = EAST(
-        device=device,
-        target_size=target_size,
-        score_thresh=score_thresh,
-    )
+    detector = EAST(device=device)
 
     # Измеряем память после загрузки модели
     mem_after_load = get_memory_usage()
