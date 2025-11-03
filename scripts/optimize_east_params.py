@@ -4,14 +4,27 @@
 Использует Bayesian optimization для быстрого поиска оптимальных параметров
 детектора с целью максимизации F1@0.5:0.95 метрики.
 
-Usage:
+Usage (CLI):
     python scripts/optimize_east_params.py \
         --folder path/to/images \
         --annotations path/to/annotations.json \
         --sample-ratio 0.3 \
         --ntrials 50
 
-    python scripts/optimize_east_params.py --folder "C:\shared\data02065\Archives020525\test_images" --annotations "C:\shared\data02065\Archives020525\test.json"--sample-ratio 0.01 -ntrials 100 --output results.json
+Usage (Direct):
+    from scripts.optimize_east_params import run_optimization
+    
+    datasets = [
+        ("C:/shared/dataset1/images", "C:/shared/dataset1/annotations.json"),
+        ("C:/shared/dataset2/images", "C:/shared/dataset2/annotations.json"),
+    ]
+    
+    results = run_optimization(
+        datasets=datasets,
+        n_images=100,  # Total images to use
+        n_trials=50,
+        output="results.json"
+    )
 """
 
 import argparse
@@ -42,13 +55,14 @@ from manuscript.detectors._east.utils import evaluate_dataset
 OPTIMIZATION_CONFIG = {
     # Параметры для оптимизации (True = оптимизируется, False = фиксированное значение)
     "optimize": {
-        "expand_ratio_w": False,
-        "expand_ratio_h": False,
-        "expand_power": False,
-        "score_thresh": False,
+        "expand_ratio_w": True,
+        "expand_ratio_h": True,
+        "expand_power": True,
+        "score_thresh": True,
         "iou_threshold": True,
-        "quantization": False,
-        "remove_area_anomalies": False,  # Фиксируем как False
+        "iou_threshold_standard": True,
+        "quantization": True,
+        "remove_area_anomalies": True,  # Фиксируем как True
     },
     # Фиксированные значения (используются когда optimize = False)
     "fixed_values": {
@@ -57,8 +71,9 @@ OPTIMIZATION_CONFIG = {
         "expand_power": 0.5,
         "score_thresh": 0.7,
         "iou_threshold": 0.2,
+        "iou_threshold_standard": 0.2,
         "quantization": 2,
-        "remove_area_anomalies": False,
+        "remove_area_anomalies": True,
     },
     # Диапазоны для оптимизации (используются когда optimize = True)
     "ranges": {
@@ -66,8 +81,9 @@ OPTIMIZATION_CONFIG = {
         "expand_ratio_h": (0.3, 2.0, 0.1),
         "expand_power": (0.1, 2.0, 0.1),
         "score_thresh": (0.5, 0.8, 0.1),
-        "iou_threshold": (0.05, 0.6, 0.05),
-        "quantization": [1, 2, 4],  # categorical
+        "iou_threshold": (0.05, 0.5, 0.05),
+        "iou_threshold_standard": (0.05, 0.5, 0.05),
+        "quantization": [1, 2, 3, 4],  # categorical
         "remove_area_anomalies": [True, False],  # categorical
     },
 }
@@ -246,6 +262,109 @@ def load_ground_truth(annotation_file: str, images_folder: str) -> Dict[str, Lis
     return ground_truths
 
 
+def load_multiple_datasets(
+    datasets: List[tuple[str, str]]
+) -> tuple[List[str], Dict[str, List], Dict[str, str]]:
+    """
+    Загружает несколько датасетов.
+
+    Parameters
+    ----------
+    datasets : list of tuple
+        Список кортежей (folder_path, annotation_path)
+
+    Returns
+    -------
+    tuple
+        (all_image_files, ground_truths, image_to_dataset)
+        - all_image_files: список всех путей к изображениям
+        - ground_truths: словарь с аннотациями
+        - image_to_dataset: словарь для отслеживания принадлежности к датасету
+    """
+    all_image_files = []
+    all_ground_truths = {}
+    image_to_dataset = {}
+
+    for i, (folder, annotations) in enumerate(datasets):
+        print(f"\nDataset {i+1}/{len(datasets)}: {folder}")
+        
+        # Загружаем изображения
+        images = get_image_files(folder)
+        print(f"  Found {len(images)} images")
+        
+        # Загружаем аннотации
+        gt = load_ground_truth(annotations, folder)
+        print(f"  Loaded annotations for {len(gt)} images")
+        
+        # Фильтруем только изображения с аннотациями
+        images_with_gt = [img for img in images if Path(img).name in gt]
+        print(f"  Images with annotations: {len(images_with_gt)}")
+        
+        # Добавляем к общему списку
+        all_image_files.extend(images_with_gt)
+        all_ground_truths.update(gt)
+        
+        # Отслеживаем принадлежность к датасету
+        for img in images_with_gt:
+            image_to_dataset[img] = f"dataset_{i+1}"
+    
+    return all_image_files, all_ground_truths, image_to_dataset
+
+
+def sample_images_uniformly(
+    image_files: List[str],
+    image_to_dataset: Dict[str, str],
+    n_images: int,
+    seed: int = 42
+) -> List[str]:
+    """
+    Равномерно семплирует изображения по датасетам.
+
+    Parameters
+    ----------
+    image_files : list
+        Список всех путей к изображениям
+    image_to_dataset : dict
+        Словарь отображения изображений на датасеты
+    n_images : int
+        Общее количество изображений для выборки
+    seed : int
+        Random seed
+
+    Returns
+    -------
+    list
+        Список семплированных путей к изображениям
+    """
+    random.seed(seed)
+    
+    # Группируем изображения по датасетам
+    datasets_images = {}
+    for img in image_files:
+        dataset = image_to_dataset[img]
+        if dataset not in datasets_images:
+            datasets_images[dataset] = []
+        datasets_images[dataset].append(img)
+    
+    n_datasets = len(datasets_images)
+    images_per_dataset = n_images // n_datasets
+    remainder = n_images % n_datasets
+    
+    sampled = []
+    
+    for i, (dataset, images) in enumerate(sorted(datasets_images.items())):
+        # Добавляем остаток к первым датасетам
+        n_sample = images_per_dataset + (1 if i < remainder else 0)
+        n_sample = min(n_sample, len(images))
+        
+        dataset_sample = random.sample(images, n_sample)
+        sampled.extend(dataset_sample)
+        
+        print(f"  {dataset}: {n_sample} images sampled (from {len(images)} available)")
+    
+    return sampled
+
+
 def evaluate_params(
     image_files: List[str],
     ground_truths: Dict[str, List],
@@ -262,21 +381,26 @@ def evaluate_params(
         F1@0.5:0.95 метрика
     """
     # Создаём детектор с заданными параметрами
-    detector = EAST(
-        device=device,
-        target_size=target_size,
-        expand_ratio_w=params["expand_ratio_w"],
-        expand_ratio_h=params["expand_ratio_h"],
-        expand_power=params["expand_power"],
-        score_thresh=params["score_thresh"],
-        iou_threshold=params["iou_threshold"],
-        quantization=params["quantization"],
-        remove_area_anomalies=params["remove_area_anomalies"],
-    )
+    try:
+        detector = EAST(
+            device=device,
+            target_size=target_size,
+            expand_ratio_w=params["expand_ratio_w"],
+            expand_ratio_h=params["expand_ratio_h"],
+            expand_power=params["expand_power"],
+            score_thresh=params["score_thresh"],
+            iou_threshold=params["iou_threshold"],
+            iou_threshold_standard=params.get("iou_threshold_standard"),
+            quantization=params["quantization"],
+            remove_area_anomalies=params["remove_area_anomalies"],
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to create EAST detector with params {params}: {e}") from e
 
     # Собираем предсказания
     predictions = {}
     gt_subset = {}  # Ground truth только для обрабатываемых изображений
+    errors = []
 
     for img_path in image_files:
         filename = Path(img_path).name
@@ -285,20 +409,41 @@ def evaluate_params(
         if filename not in ground_truths:
             continue
 
-        result = detector.predict(img_path, vis=False, profile=False)
+        try:
+            result = detector.predict(img_path, vis=False, profile=False)
 
-        boxes = []
-        for block in result["page"].blocks:
-            for word in block.words:
-                if word.polygon and len(word.polygon) > 0:
-                    xs = [pt[0] for pt in word.polygon]
-                    ys = [pt[1] for pt in word.polygon]
-                    x_min, x_max = min(xs), max(xs)
-                    y_min, y_max = min(ys), max(ys)
-                    boxes.append((x_min, y_min, x_max, y_max))
+            boxes = []
+            for block in result["page"].blocks:
+                for word in block.words:
+                    if word.polygon and len(word.polygon) > 0:
+                        xs = [pt[0] for pt in word.polygon]
+                        ys = [pt[1] for pt in word.polygon]
+                        x_min, x_max = min(xs), max(xs)
+                        y_min, y_max = min(ys), max(ys)
+                        boxes.append((x_min, y_min, x_max, y_max))
 
-        predictions[filename] = boxes
-        gt_subset[filename] = ground_truths[filename]
+            predictions[filename] = boxes
+            gt_subset[filename] = ground_truths[filename]
+        except Exception as e:
+            errors.append((filename, str(e)))
+            # Продолжаем обработку остальных изображений
+            continue
+    
+    # Если были ошибки, выводим предупреждение
+    if errors:
+        print(f"    Warning: {len(errors)} images failed to process:")
+        for fname, err in errors[:3]:  # Показываем первые 3
+            print(f"      - {fname}: {err}")
+        if len(errors) > 3:
+            print(f"      ... and {len(errors) - 3} more")
+
+    # Проверяем что у нас есть предсказания для оценки
+    if not predictions:
+        raise ValueError(
+            f"No predictions generated for any images. "
+            f"Checked {len(image_files)} images, "
+            f"found {len([f for f in image_files if Path(f).name in ground_truths])} with GT."
+        )
 
     # Оцениваем метрики только на обработанных изображениях
     # Используем параллельную обработку для ускорения (n_jobs=None = все CPU)
@@ -362,6 +507,10 @@ def create_objective(
                 image_files, ground_truths, params, device, target_size
             )
 
+            # Проверяем на валидность
+            if not isinstance(score, (int, float)) or np.isnan(score) or np.isinf(score):
+                raise ValueError(f"Invalid score: {score}")
+
             # Кешируем результат
             cache_score(params, score)
 
@@ -370,8 +519,17 @@ def create_objective(
 
             return score
         except Exception as e:
-            print(f"\n  [ERROR] Trial {trial.number}: {e}")
+            import traceback
+            print(f"\n  [ERROR] Trial {trial.number}: {type(e).__name__}: {e}")
             print(f"    Params: {params}")
+            if isinstance(e, (RuntimeError, ValueError)):
+                # Выводим краткую информацию для известных ошибок
+                pass
+            else:
+                # Полный traceback для неожиданных ошибок
+                print("    Full traceback:")
+                traceback.print_exc()
+            # Возвращаем 0.0 для неудачных trials
             return 0.0
 
     return objective
@@ -384,15 +542,61 @@ def optimize_with_optuna(
     device: str = "cpu",
     target_size: int = 1280,
     seed: int = 42,
+    storage: Optional[str] = None,
+    study_name: str = "east_optimization",
+    load_if_exists: bool = True,
 ) -> Dict[str, Any]:
     """
     Выполняет оптимизацию параметров с помощью Optuna.
+
+    Parameters
+    ----------
+    image_files : list
+        Список путей к изображениям
+    ground_truths : dict
+        Ground truth аннотации
+    n_trials : int
+        Количество trials для оптимизации
+    device : str
+        Устройство для EAST
+    target_size : int
+        Размер изображения
+    seed : int
+        Random seed
+    storage : str, optional
+        URL для хранилища Optuna (например, "sqlite:///optuna.db")
+        Если None, используется in-memory хранилище
+    study_name : str
+        Название study
+    load_if_exists : bool
+        Загружать существующий study если есть
 
     Returns
     -------
     dict
         Результаты: лучшие параметры, лучшая метрика, история всех trials
     """
+    # Если указано хранилище, проверяем существует ли study
+    existing_trials = 0
+    if storage:
+        try:
+            existing_study = optuna.load_study(
+                study_name=study_name,
+                storage=storage
+            )
+            existing_trials = len(existing_study.trials)
+            print(f"\n{'='*80}")
+            print(f"НАЙДЕН СУЩЕСТВУЮЩИЙ STUDY: {study_name}")
+            print(f"{'='*80}")
+            print(f"Уже выполнено trials: {existing_trials}")
+            if existing_trials > 0:
+                print(f"Лучший результат: {existing_study.best_value:.4f}")
+                print(f"Лучшие параметры: {existing_study.best_params}")
+            print(f"{'='*80}\n")
+        except KeyError:
+            print(f"\nСоздаём новый study: {study_name}")
+            print(f"Хранилище: {storage}\n")
+    
     print("=" * 80)
     print("OPTIMIZATION CONFIGURATION")
     print("=" * 80)
@@ -409,25 +613,65 @@ def optimize_with_optuna(
             print(f"  • {param:25s}: {fixed_val}")
 
     print("\n" + "=" * 80)
-    print(f"Starting Optuna optimization with {n_trials} trials")
+    print(f"Starting Optuna optimization with {n_trials} NEW trials")
+    if existing_trials > 0:
+        print(f"Продолжаем оптимизацию (уже выполнено: {existing_trials} trials)")
+        print(f"После завершения будет: {existing_trials + n_trials} trials")
     print(f"Testing on {len(image_files)} images")
     print(f"Images with annotations: {len(ground_truths)}")
     print(f"Cache size at start: {len(PARAMS_CACHE)} entries")
+    if storage:
+        print(f"Storage: {storage}")
+        print(f"Study name: {study_name}")
     print("=" * 80 + "\n")
 
-    # Создаем study с TPE sampler
+    # Создаем study с TPE sampler и персистентным хранилищем
     sampler = TPESampler(seed=seed)
     study = optuna.create_study(
-        direction="maximize", sampler=sampler, study_name="east_optimization"
+        study_name=study_name,
+        storage=storage,
+        load_if_exists=load_if_exists,
+        direction="maximize", 
+        sampler=sampler,
     )
 
     # Создаем objective функцию
     objective = create_objective(image_files, ground_truths, device, target_size)
 
-    # Запускаем оптимизацию
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+    # Запускаем оптимизацию с обработкой ошибок
+    try:
+        study.optimize(
+            objective, 
+            n_trials=n_trials, 
+            show_progress_bar=True,
+            catch=(Exception,)  # Продолжаем даже если trial упал
+        )
+    except KeyboardInterrupt:
+        print("\n\nOptimization interrupted by user!")
+        print(f"Completed {len(study.trials)} trials before interruption.")
 
     # Собираем результаты
+    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    
+    if not completed_trials:
+        print("\n" + "=" * 80)
+        print("WARNING: No trials completed successfully!")
+        print("=" * 80)
+        print(f"Total trials attempted: {len(study.trials)}")
+        for i, trial in enumerate(study.trials[:5]):  # Показываем первые 5
+            print(f"  Trial {i}: {trial.state}")
+        print("=" * 80 + "\n")
+        
+        return {
+            "best_params": {},
+            "best_score": 0.0,
+            "history": [],
+            "n_trials": len(study.trials),
+            "cache_size": len(PARAMS_CACHE),
+            "study": study,
+            "error": "No trials completed successfully"
+        }
+    
     best_trial = study.best_trial
     best_params = best_trial.params
     best_score = best_trial.value
@@ -485,6 +729,152 @@ def optimize_with_optuna(
         "cache_size": len(PARAMS_CACHE),
         "study": study,
     }
+
+
+def run_optimization(
+    datasets: List[tuple[str, str]],
+    n_images: int = 100,
+    n_trials: int = 50,
+    target_size: int = 1280,
+    device: str = "cpu",
+    output: str = "optimization_results.json",
+    cache: Optional[str] = None,
+    storage: Optional[str] = "sqlite:///optuna_east.db",
+    study_name: str = "east_optimization",
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    Упрощенная функция для запуска оптимизации из кода.
+
+    Parameters
+    ----------
+    datasets : list of tuple
+        Список кортежей (folder_path, annotation_path) для каждого датасета
+    n_images : int
+        Общее количество изображений для использования (равномерно распределяется по датасетам)
+    n_trials : int
+        Количество НОВЫХ trials для оптимизации (добавляется к существующим)
+    target_size : int
+        Размер изображения для детектора
+    device : str
+        Устройство ('cpu' или 'cuda')
+    output : str
+        Путь для сохранения результатов
+    cache : str, optional
+        Путь к файлу кеша
+    storage : str, optional
+        URL базы данных Optuna (по умолчанию "sqlite:///optuna_east.db")
+        Используется для автоматического продолжения оптимизации.
+        Установите None для временного хранилища в памяти.
+    study_name : str
+        Название study в базе данных
+    seed : int
+        Random seed
+
+    Returns
+    -------
+    dict
+        Результаты оптимизации
+
+    Examples
+    --------
+    >>> datasets = [
+    ...     ("C:/data/set1/images", "C:/data/set1/annotations.json"),
+    ...     ("C:/data/set2/images", "C:/data/set2/annotations.json"),
+    ... ]
+    >>> # Первый запуск - создаст базу данных
+    >>> results = run_optimization(
+    ...     datasets=datasets,
+    ...     n_images=100,
+    ...     n_trials=50,
+    ...     storage="sqlite:///optuna_east.db"
+    ... )
+    >>> # При повторном запуске продолжит с того же места
+    >>> results = run_optimization(
+    ...     datasets=datasets,
+    ...     n_images=100,
+    ...     n_trials=50,  # Добавит еще 50 trials
+    ...     storage="sqlite:///optuna_east.db"  # Та же база
+    ... )
+    """
+    # Устанавливаем seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+    # Загружаем кеш если указан
+    if cache:
+        load_cache(cache)
+
+    print("=" * 80)
+    print("LOADING DATASETS")
+    print("=" * 80)
+    
+    # Загружаем все датасеты
+    all_image_files, ground_truths, image_to_dataset = load_multiple_datasets(datasets)
+    
+    print(f"\n{'='*80}")
+    print(f"Total images with annotations: {len(all_image_files)}")
+    print(f"Total unique ground truth entries: {len(ground_truths)}")
+    print("=" * 80)
+    
+    # Семплируем изображения равномерно
+    print(f"\nSAMPLING {n_images} IMAGES UNIFORMLY ACROSS DATASETS:")
+    sampled_images = sample_images_uniformly(
+        all_image_files, image_to_dataset, n_images, seed
+    )
+    print(f"\nTotal sampled: {len(sampled_images)} images")
+    print()
+
+    # Выполняем оптимизацию
+    results = optimize_with_optuna(
+        sampled_images,
+        ground_truths,
+        n_trials=n_trials,
+        device=device,
+        target_size=target_size,
+        seed=seed,
+        storage=storage,
+        study_name=study_name,
+    )
+
+    # Сохраняем кеш если указан
+    if cache:
+        save_cache(cache)
+
+    # Подготавливаем данные для сохранения
+    sorted_history = sorted(
+        results["history"], key=lambda x: x["f1_score"], reverse=True
+    )
+
+    output_data = {
+        "best_params": results["best_params"],
+        "best_score": float(results["best_score"]),
+        "optimization_settings": {
+            "method": "Optuna (TPE Sampler)",
+            "datasets": [{"folder": f, "annotations": a} for f, a in datasets],
+            "n_images": n_images,
+            "n_trials": n_trials,
+            "target_size": target_size,
+            "device": device,
+            "seed": seed,
+            "total_images_available": len(all_image_files),
+            "sampled_images": len(sampled_images),
+        },
+        "optimization_config": OPTIMIZATION_CONFIG,
+        "n_trials_completed": results["n_trials"],
+        "cache_size": results["cache_size"],
+        "history": sorted_history,
+    }
+
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+    print(f"\n[OK] Results saved to: {output}")
+    
+    return results
 
 
 def main():

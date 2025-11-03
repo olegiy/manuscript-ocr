@@ -153,15 +153,20 @@ def standard_nms(polys, scores, iou_threshold):
     return polys_arr[keep_idx], scores_arr[keep_idx]
 
 
-def locality_aware_nms(boxes, iou_threshold):
+def locality_aware_nms(boxes, iou_threshold, iou_threshold_standard=None):
     """
     boxes — numpy-массив shape (n,9), где каждая строка:
             [x0, y0, x1, y1, x2, y2, x3, y3, score]
-    iou_threshold — порог для объединения (IoU)
+    iou_threshold — порог для объединения (IoU) в locality-aware фазе
+    iou_threshold_standard — порог для standard NMS. Если None, используется iou_threshold
     Возвращает итоговый numpy-массив боксов (m,9).
     """
     if boxes is None or len(boxes) == 0:
         return np.zeros((0, 9), dtype=np.float32)
+    
+    # Используем iou_threshold для standard_nms, если не указан отдельный
+    if iou_threshold_standard is None:
+        iou_threshold_standard = iou_threshold
 
     boxes_sorted = np.ascontiguousarray(boxes, dtype=np.float64)[
         np.argsort(boxes[:, 0])
@@ -208,7 +213,7 @@ def locality_aware_nms(boxes, iou_threshold):
     merged_scores_arr = np.array(merged_scores, dtype=np.float64)
 
     kept_polys, kept_scores = standard_nms(
-        merged_polys_arr, merged_scores_arr, iou_threshold
+        merged_polys_arr, merged_scores_arr, iou_threshold_standard
     )
 
     if kept_polys.size == 0:

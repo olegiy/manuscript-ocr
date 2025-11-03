@@ -13,8 +13,11 @@ Usage:
 
     # Скорость + точность
     python scripts/east_infer_speed_test.py --folder path/to/images --annotations path/to/annotations.json
-    python scripts/east_infer_speed_test.py --folder "C:\shared\data02065\Archives020525\test_images" --annotations "C:\shared\data02065\Archives020525\test.json" --gpu-only
-
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data0205\data02065\Archives020525\test_images" --annotations "C:\shared\data0205\data02065\Archives020525\test.json" --gpu-only
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data0205\data02065\ICDAR2015\test_images" --annotations "C:\shared\data0205\data02065\ICDAR2015\test.json"
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data0205\data02065\school_notebooks_RU\test_images" --annotations "C:\shared\data0205\data02065\school_notebooks_RU\test.json"
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data0205\data02065\IAM\test_images" --annotations "C:\shared\data0205\data02065\IAM\test.json"
+    python scripts/east_infer_speed_test.py --folder "C:\shared\data0205\data02065\TotalText\test_images" --annotations "C:\shared\data0205\data02065\TotalText\test.json"
     # С кастомными параметрами
     python scripts/east_infer_speed_test.py --folder "C:\shared\data02065\Archives020525\test_images" --target-size 1280
 """
@@ -521,7 +524,7 @@ def main():
             print("\nEvaluating accuracy on CPU predictions...")
             # Используем параллельную обработку для ускорения вычисления метрик
             accuracy_metrics = evaluate_dataset(
-                cpu_stats["predictions"], ground_truths, verbose=True, n_jobs=None
+                cpu_stats["predictions"], ground_truths, verbose=True, n_jobs=1
             )
             cpu_stats["accuracy_metrics"] = accuracy_metrics
 
@@ -543,7 +546,7 @@ def main():
             print("\nEvaluating accuracy on GPU predictions...")
             # Используем параллельную обработку для ускорения вычисления метрик
             accuracy_metrics = evaluate_dataset(
-                gpu_stats["predictions"], ground_truths, verbose=True, n_jobs=None
+                gpu_stats["predictions"], ground_truths, verbose=True, n_jobs=1
             )
             gpu_stats["accuracy_metrics"] = accuracy_metrics
 

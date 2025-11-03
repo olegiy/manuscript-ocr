@@ -114,6 +114,25 @@ def test_locality_aware_nms():
     assert final_boxes.shape[0] == 2
 
 
+def test_locality_aware_nms_with_standard_threshold():
+    # Тест с отдельным порогом для standard NMS
+    boxes = np.array(
+        [
+            [0, 0, 4, 0, 4, 4, 0, 4, 0.9],
+            [1, 1, 5, 1, 5, 5, 1, 5, 0.8],
+            [10, 10, 14, 10, 14, 14, 10, 14, 0.7],
+            [11, 11, 15, 11, 15, 15, 11, 15, 0.6],
+        ],
+        dtype=np.float32,
+    )
+    iou_threshold = 0.1
+    iou_threshold_standard = 0.05  # Более строгий порог для standard NMS
+    final_boxes = locality_aware_nms(boxes, iou_threshold, iou_threshold_standard)
+    # Результат должен быть корректным массивом
+    assert final_boxes.shape[1] == 9
+    assert final_boxes.dtype == np.float32
+
+
 def test_polygon_area_degenerate():
     # Менее трех точек => площадь должна быть 0
     poly = np.array([[0, 0], [1, 0]], dtype=np.float64)

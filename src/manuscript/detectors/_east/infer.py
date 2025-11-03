@@ -30,11 +30,12 @@ class EAST:
         weights_path: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
         target_size: int = 1280,
-        expand_ratio_w: float = 1.7,
-        expand_ratio_h: float = 1.7,
-        expand_power: float = 0.5,
-        score_thresh: float = 0.7,
-        iou_threshold: float = 0.2,
+        expand_ratio_w: float = 1.4,
+        expand_ratio_h: float = 1.5,
+        expand_power: float = 0.6,
+        score_thresh: float = 0.6,
+        iou_threshold: float = 0.05,
+        iou_threshold_standard: Optional[float] = 0.05,
         score_geo_scale: float = 0.25,
         quantization: int = 2,
         axis_aligned_output: bool = True,
@@ -72,7 +73,10 @@ class EAST:
             Confidence threshold for selecting candidate detections before NMS.
             Default is 0.7.
         iou_threshold : float, optional
-            IoU threshold for locality-aware NMS. Default is 0.1.
+            IoU threshold for locality-aware NMS merging phase. Default is 0.2.
+        iou_threshold_standard : float, optional
+            IoU threshold for standard NMS after locality-aware merging.
+            If None, uses the same value as iou_threshold. Default is None.
         score_geo_scale : float, optional
             Scale factor for decoding geometry/score maps. Default is 0.25.
         quantization : int, optional
@@ -133,6 +137,7 @@ class EAST:
         self.expand_power = expand_power
         self.score_thresh = score_thresh
         self.iou_threshold = iou_threshold
+        self.iou_threshold_standard = iou_threshold_standard
         self.quantization = quantization
         self.axis_aligned_output = axis_aligned_output
         self.remove_area_anomalies = remove_area_anomalies
@@ -339,7 +344,9 @@ class EAST:
         # 5) Apply NMS
         t0 = time.time()
         final_quads_nms = locality_aware_nms(
-            final_quads, iou_threshold=self.iou_threshold
+            final_quads, 
+            iou_threshold=self.iou_threshold,
+            iou_threshold_standard=self.iou_threshold_standard
         )
         if profile:
             print(f"  NMS: {time.time() - t0:.3f}s")
@@ -371,7 +378,7 @@ class EAST:
         words: List[Word] = []
         for quad in output_quads:
             pts = quad[:8].reshape(4, 2)
-            score = float(quad[8])
+            score = float(np.clip(quad[8], 0.0, 1.0))
             words.append(Word(polygon=pts.tolist(), detection_confidence=score))
 
         # 9) Optional sorting in reading order
