@@ -61,6 +61,34 @@ class AttentionCell(nn.Module):
         return cur_hidden, alpha
 
 
+class AttentionCellGRU(nn.Module):
+    """Attention cell with GRU decoder (faster, less memory than LSTM)."""
+
+    def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
+        super().__init__()
+        self.i2h = nn.Linear(input_size, hidden_size, bias=False)
+        self.h2h = nn.Linear(hidden_size, hidden_size)
+        self.score = nn.Linear(hidden_size, 1, bias=False)
+        self.rnn = nn.GRUCell(input_size + num_embeddings, hidden_size)
+        self.hidden_size = hidden_size
+        self.dropout_p = dropout_p
+
+    def forward(self, prev_hidden, batch_H, char_onehots):
+        # batch_H: [B, Tenc, C]
+        # prev_hidden: [B, H] for GRU (single hidden state)
+        proj_H = self.i2h(batch_H)  # [B, Tenc, H]
+        proj_h = self.h2h(prev_hidden).unsqueeze(1)
+        e = self.score(torch.tanh(proj_H + proj_h))  # [B, Tenc, 1]
+
+        alpha = F.softmax(e, dim=1)  # [B, Tenc, 1]
+        alpha = F.dropout(alpha, p=self.dropout_p, training=self.training)
+
+        context = torch.bmm(alpha.transpose(1, 2), batch_H).squeeze(1)  # [B, C]
+        x = torch.cat([context, char_onehots], 1)  # [B, C + V]
+        cur_hidden = self.rnn(x, prev_hidden)  # [B, H]
+        return cur_hidden, alpha
+
+
 class Attention(nn.Module):
     def __init__(
         self,
@@ -73,11 +101,28 @@ class Attention(nn.Module):
         blank_id: Optional[int] = None,
         dropout_p: float = 0.1,
         sampling_prob: float = 0.0,
+        decoder_type: str = "LSTM",  # "LSTM" or "GRU"
     ):
         super().__init__()
-        self.attention_cell = AttentionCell(
-            input_size, hidden_size, num_classes, dropout_p=dropout_p
-        )
+
+        # Choose decoder cell type
+        decoder_type = decoder_type.upper()
+        if decoder_type == "LSTM":
+            self.attention_cell = AttentionCell(
+                input_size, hidden_size, num_classes, dropout_p=dropout_p
+            )
+            self.is_lstm = True
+        elif decoder_type == "GRU":
+            self.attention_cell = AttentionCellGRU(
+                input_size, hidden_size, num_classes, dropout_p=dropout_p
+            )
+            self.is_lstm = False
+        else:
+            raise ValueError(
+                f"Unknown decoder_type: {decoder_type}. Use 'LSTM' or 'GRU'"
+            )
+
+        self.decoder_type = decoder_type
         self.hidden_size = hidden_size
         self.num_classes = num_classes
 
@@ -118,16 +163,22 @@ class Attention(nn.Module):
         H, V = self.hidden_size, self.num_classes
 
         h0 = torch.zeros(B, H, device=device)
-        c0 = torch.zeros(B, H, device=device)
+
+        # Initialize hidden state based on decoder type
+        if self.is_lstm:
+            c0 = torch.zeros(B, H, device=device)
+            beam_h = h0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
+            beam_c = c0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
+        else:
+            # GRU only needs h
+            beam_h = h0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
+            beam_c = None
 
         beam_tokens = torch.full(
             (B, beam_size, 1), self.sos_id, dtype=torch.long, device=device
         )
         beam_scores = torch.full((B, beam_size), float("-inf"), device=device)
         beam_scores[:, 0] = 0.0
-
-        beam_h = h0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
-        beam_c = c0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
 
         finished = torch.zeros(B, beam_size, dtype=torch.bool, device=device)
 
@@ -136,15 +187,30 @@ class Attention(nn.Module):
         for t in range(batch_max_length):
             last_tok = beam_tokens[:, :, -1].reshape(B * beam_size)  # [B*beam]
             flat_h = beam_h.reshape(B * beam_size, H)
-            flat_c = beam_c.reshape(B * beam_size, H)
 
             onehots = self._char_to_onehot(last_tok, device)  # [B*beam, V]
+
+            # Prepare hidden state based on decoder type
+            if self.is_lstm:
+                flat_c = beam_c.reshape(B * beam_size, H)
+                prev_hidden = (flat_h, flat_c)
+            else:
+                prev_hidden = flat_h
+
             hidden, _ = self.attention_cell(
-                (flat_h, flat_c),
+                prev_hidden,
                 batch_H.repeat_interleave(beam_size, dim=0),
                 onehots,
             )
-            out = F.dropout(hidden[0], p=self.dropout_p, training=self.training)
+
+            # Extract h and c from hidden state
+            if self.is_lstm:
+                h_out, c_out = hidden
+            else:
+                h_out = hidden
+                c_out = None
+
+            out = F.dropout(h_out, p=self.dropout_p, training=self.training)
             logits_t = self.generator(out)  # [B*beam, V]
             logits_t = self._mask_logits(logits_t)
             if temperature != 1.0:
@@ -154,8 +220,11 @@ class Attention(nn.Module):
             log_probs = F.log_softmax(logits_t, dim=-1)
 
             log_probs = log_probs.view(B, beam_size, V)
-            h_new = hidden[0].view(B, beam_size, H)
-            c_new = hidden[1].view(B, beam_size, H)
+            h_new = h_out.view(B, beam_size, H)
+            if self.is_lstm:
+                c_new = c_out.view(B, beam_size, H)
+            else:
+                c_new = None
 
             if finished.any():
                 mask = finished.unsqueeze(-1)  # [B, beam, 1]
@@ -188,7 +257,11 @@ class Attention(nn.Module):
             gather_h = h_new.gather(
                 1, next_beam.unsqueeze(-1).expand(-1, -1, H)
             )  # [B, beam, H]
-            gather_c = c_new.gather(1, next_beam.unsqueeze(-1).expand(-1, -1, H))
+
+            if self.is_lstm:
+                gather_c = c_new.gather(1, next_beam.unsqueeze(-1).expand(-1, -1, H))
+            else:
+                gather_c = None
 
             beam_tokens = torch.cat(
                 [
@@ -206,7 +279,11 @@ class Attention(nn.Module):
                 sum_logp = top_scores
             beam_scores = sum_logp
 
-            beam_h, beam_c = gather_h, gather_c
+            beam_h = gather_h
+            if self.is_lstm:
+                beam_c = gather_c
+            else:
+                beam_c = None
 
             finished = finished.gather(1, next_beam) | (next_token == self.eos_id)
 
@@ -246,8 +323,14 @@ class Attention(nn.Module):
         steps = batch_max_length + 1
 
         h = torch.zeros(B, self.hidden_size, device=device)
-        c = torch.zeros(B, self.hidden_size, device=device)
-        hidden = (h, c)
+
+        # Initialize hidden state based on decoder type
+        if self.is_lstm:
+            c = torch.zeros(B, self.hidden_size, device=device)
+            hidden = (h, c)
+        else:
+            hidden = h
+
         targets = torch.full((B,), self.sos_id, dtype=torch.long, device=device)
 
         probs = []
@@ -256,7 +339,14 @@ class Attention(nn.Module):
         for t in range(steps):
             onehots = self._char_to_onehot(targets, device=device)
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
-            out = F.dropout(hidden[0], p=self.dropout_p, training=self.training)
+
+            # Extract h from hidden state
+            if self.is_lstm:
+                h_out = hidden[0]
+            else:
+                h_out = hidden
+
+            out = F.dropout(h_out, p=self.dropout_p, training=self.training)
             logits_t = self.generator(out)
             logits_t = self._mask_logits(logits_t)
 
@@ -309,8 +399,13 @@ class Attention(nn.Module):
         steps = batch_max_length + 1
 
         h = torch.zeros(B, self.hidden_size, device=device)
-        c = torch.zeros(B, self.hidden_size, device=device)
-        hidden = (h, c)
+
+        # Initialize hidden state based on decoder type
+        if self.is_lstm:
+            c = torch.zeros(B, self.hidden_size, device=device)
+            hidden = (h, c)
+        else:
+            hidden = h
 
         out_hid = torch.zeros(B, steps, self.hidden_size, device=device)
         targets = text[:, 0]  # <SOS>
@@ -318,9 +413,16 @@ class Attention(nn.Module):
         for t in range(steps):
             onehots = self._char_to_onehot(targets, device=device)
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
-            out_hid[:, t, :] = hidden[0]
 
-            out = F.dropout(hidden[0], p=self.dropout_p, training=self.training)
+            # Extract h from hidden state
+            if self.is_lstm:
+                h_out = hidden[0]
+            else:
+                h_out = hidden
+
+            out_hid[:, t, :] = h_out
+
+            out = F.dropout(h_out, p=self.dropout_p, training=self.training)
             logits_t = self.generator(out)
 
             # scheduled sampling
@@ -357,6 +459,7 @@ class TRBAModel(nn.Module):
         hidden_size=256,
         num_encoder_layers=2,
         encoder_type="LSTM",  # "LSTM" or "GRU"
+        decoder_type="LSTM",  # "LSTM" or "GRU"
         img_h=64,
         img_w=256,
         cnn_in_channels=3,
@@ -375,6 +478,7 @@ class TRBAModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_encoder_layers = num_encoder_layers
         self.encoder_type = encoder_type.upper()
+        self.decoder_type = decoder_type.upper()
         self.img_h = img_h
         self.img_w = img_w
         self.cnn_in_channels = cnn_in_channels
@@ -420,6 +524,7 @@ class TRBAModel(nn.Module):
             blank_id=blank_id,
             dropout_p=0.1,
             sampling_prob=0.0,
+            decoder_type=self.decoder_type,
         )
 
     def encode(self, x):

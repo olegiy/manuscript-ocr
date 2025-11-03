@@ -2,6 +2,7 @@ import json
 import os
 import logging
 import csv
+import random
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List
 
@@ -192,7 +193,200 @@ def split_train_val(
     return train_sets, val_sets
 
 
+def visualize_predictions_tensorboard(
+    model: nn.Module,
+    val_loader: DataLoader,
+    itos: List[str],
+    pad_id: int,
+    eos_id: int,
+    blank_id: Optional[int],
+    device: torch.device,
+    writer: SummaryWriter,
+    num_samples: int = 10,
+    max_len: int = 25,
+    mode: str = "greedy",
+    epoch: Optional[int] = None,
+    logger: Optional[logging.Logger] = None,
+    **decode_kwargs,
+) -> None:
+    """
+    Визуализирует случайные примеры распознавания в TensorBoard.
+
+    Отображает изображения с наложенным текстом (ground truth и prediction).
+
+    Parameters
+    ----------
+    model : nn.Module
+        Модель для инференса.
+    val_loader : DataLoader
+        DataLoader с валидационными данными.
+    itos : List[str]
+        Список символов (индекс -> токен).
+    pad_id : int
+        ID токена паддинга.
+    eos_id : int
+        ID токена конца последовательности.
+    blank_id : Optional[int]
+        ID токена blank (если используется).
+    device : torch.device
+        Устройство для вычислений.
+    writer : SummaryWriter
+        TensorBoard writer для логирования изображений.
+    num_samples : int, optional
+        Количество случайных примеров. По умолчанию 10.
+    max_len : int, optional
+        Максимальная длина последовательности. По умолчанию 25.
+    mode : str, optional
+        Режим декодирования ("greedy" или "beam"). По умолчанию "greedy".
+    epoch : Optional[int], optional
+        Номер текущей эпохи.
+    logger : Optional[logging.Logger], optional
+        Logger для вывода информации.
+    **decode_kwargs
+        Параметры декодирования (beam_size, alpha, temperature).
+    """
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    import torchvision
+
+    model.eval()
+
+    # Собираем все батчи
+    all_batches = []
+    with torch.no_grad():
+        for batch in val_loader:
+            all_batches.append(batch)
+
+    if not all_batches:
+        return
+
+    # Выбираем случайные примеры
+    num_batches = len(all_batches)
+    samples_collected = []
+
+    attempts = 0
+    max_attempts = num_batches * 2
+
+    while len(samples_collected) < num_samples and attempts < max_attempts:
+        batch_idx = random.randint(0, num_batches - 1)
+        imgs, text_in, target_y, lengths = all_batches[batch_idx]
+
+        batch_size = imgs.size(0)
+        if batch_size == 0:
+            attempts += 1
+            continue
+
+        sample_idx = random.randint(0, batch_size - 1)
+        sample_key = (batch_idx, sample_idx)
+
+        if sample_key not in [s[0] for s in samples_collected]:
+            samples_collected.append(
+                (sample_key, imgs[sample_idx : sample_idx + 1], target_y[sample_idx])
+            )
+
+        attempts += 1
+
+    if not samples_collected:
+        return
+
+    # Настройка декодирования
+    forward_kwargs = {"is_train": False, "batch_max_length": max_len}
+    if mode == "greedy":
+        forward_kwargs["mode"] = "greedy"
+    elif mode == "beam":
+        forward_kwargs["mode"] = "beam"
+        forward_kwargs["beam_size"] = decode_kwargs.get("beam_size", 8)
+        forward_kwargs["alpha"] = decode_kwargs.get("alpha", 0.9)
+        forward_kwargs["temperature"] = decode_kwargs.get("temperature", 1.7)
+
+    # Обрабатываем примеры
+    images_with_text = []
+
+    with torch.no_grad():
+        for idx, (sample_key, img, target) in enumerate(samples_collected, 1):
+            img_device = img.to(device)
+
+            # Ground truth
+            gt_text = decode_tokens(
+                target.cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
+            )
+
+            # Prediction
+            encoded = model.encode(img_device)
+            _, pred_ids = model.attn(encoded, **forward_kwargs)
+            pred_text = decode_tokens(
+                pred_ids[0].cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
+            )
+
+            # Конвертируем изображение
+            img_np = img[0].cpu().numpy()  # [C, H, W]
+
+            # Денормализация
+            mean = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
+            std = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+            img_np = img_np * std + mean
+            img_np = np.clip(img_np, 0, 1)
+
+            # HWC uint8
+            img_np = (img_np.transpose(1, 2, 0) * 255).astype(np.uint8)
+            img_pil = Image.fromarray(img_np)
+
+            # Добавляем область для текста
+            img_h, img_w = img_pil.size[1], img_pil.size[0]
+            text_height = 60
+            new_img = Image.new(
+                "RGB", (img_w, img_h + text_height), color=(255, 255, 255)
+            )
+            new_img.paste(img_pil, (0, 0))
+
+            # Рисуем текст
+            draw = ImageDraw.Draw(new_img)
+
+            try:
+                font = ImageFont.truetype("arial.ttf", 12)
+            except:
+                font = ImageFont.load_default()
+
+            # Цвет в зависимости от корректности
+            is_correct = gt_text == pred_text
+            color_gt = (0, 128, 0) if is_correct else (255, 0, 0)
+
+            draw.text((5, img_h + 5), f"GT:   {gt_text}", fill=color_gt, font=font)
+            draw.text(
+                (5, img_h + 30), f"Pred: {pred_text}", fill=(0, 0, 255), font=font
+            )
+
+            # Обратно в тензор
+            img_with_text = np.array(new_img).transpose(2, 0, 1)  # CHW
+            img_with_text = torch.from_numpy(img_with_text).float() / 255.0
+
+            images_with_text.append(img_with_text)
+
+    if not images_with_text:
+        return
+
+    # Создаем сетку
+    grid = torchvision.utils.make_grid(
+        images_with_text,
+        nrow=min(5, len(images_with_text)),
+        padding=10,
+        normalize=False,
+        pad_value=1.0,
+    )
+
+    # Логируем в TensorBoard
+    tag = f"Predictions/{mode}"
+    if epoch is not None:
+        writer.add_image(tag, grid, epoch)
+        if logger:
+            logger.info(
+                f"Визуализация {len(images_with_text)} примеров ({mode}) в TensorBoard"
+            )
+
+
 def run_training(cfg: Config, device: str = "cuda"):
+    seed = getattr(cfg, "seed", 42)
+    set_seed(seed)
     seed = getattr(cfg, "seed", 42)
     set_seed(seed)
 
@@ -301,6 +495,7 @@ def run_training(cfg: Config, device: str = "cuda"):
     # --- модель ---
     num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
     encoder_type = getattr(cfg, "encoder_type", "LSTM")
+    decoder_type = getattr(cfg, "decoder_type", "LSTM")
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
 
@@ -309,6 +504,7 @@ def run_training(cfg: Config, device: str = "cuda"):
         hidden_size=hidden_size,
         num_encoder_layers=num_encoder_layers,
         encoder_type=encoder_type,
+        decoder_type=decoder_type,
         img_h=img_h,
         img_w=img_w,
         cnn_in_channels=cnn_in_channels,
@@ -919,6 +1115,46 @@ def run_training(cfg: Config, device: str = "cuda"):
                 writer.add_scalar("Accuracy/val_beam", val_acc_beam, epoch)
                 writer.add_scalar("CER/val_beam", val_cer_beam, epoch)
                 writer.add_scalar("WER/val_beam", val_wer_beam, epoch)
+
+            # Визуализация случайных примеров в TensorBoard
+            if val_loaders_individual:
+                # Используем первый валидационный загрузчик для визуализации
+                visualize_predictions_tensorboard(
+                    model=model,
+                    val_loader=val_loaders_individual[0],
+                    itos=itos,
+                    pad_id=PAD,
+                    eos_id=EOS,
+                    blank_id=BLANK,
+                    device=device,
+                    writer=writer,
+                    num_samples=10,
+                    max_len=max_len,
+                    mode="greedy",
+                    epoch=epoch,
+                    logger=logger,
+                )
+
+                # Если используется beam search, показываем и его результаты
+                if dual_validate:
+                    visualize_predictions_tensorboard(
+                        model=model,
+                        val_loader=val_loaders_individual[0],
+                        itos=itos,
+                        pad_id=PAD,
+                        eos_id=EOS,
+                        blank_id=BLANK,
+                        device=device,
+                        writer=writer,
+                        num_samples=10,
+                        max_len=max_len,
+                        mode="beam",
+                        epoch=epoch,
+                        logger=logger,
+                        beam_size=beam_size,
+                        alpha=beam_alpha,
+                        temperature=beam_temperature,
+                    )
         else:
             logger.info(
                 f"Epoch {epoch:03d}: skipping validation (eval_every={eval_every})"

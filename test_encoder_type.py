@@ -1,4 +1,4 @@
-"""Тест для проверки параметра encoder_type в TRBA."""
+"""Тест для проверки параметров encoder_type и decoder_type в TRBA."""
 
 import torch
 from src.manuscript.recognizers._trba.model.model import TRBAModel
@@ -11,83 +11,100 @@ img_h = 64
 img_w = 256
 batch_size = 2
 
-print("=" * 60)
-print("Тестирование encoder_type в TRBA")
-print("=" * 60)
+print("=" * 80)
+print("Тестирование encoder_type и decoder_type в TRBA")
+print("=" * 80)
 
-# Тест 1: LSTM encoder (по умолчанию)
-print("\n1. Тестирование LSTM encoder...")
-model_lstm = TRBAModel(
-    num_classes=num_classes,
-    hidden_size=hidden_size,
-    num_encoder_layers=num_encoder_layers,
-    encoder_type="LSTM",
-    img_h=img_h,
-    img_w=img_w,
-)
+# Матрица тестов: все комбинации encoder/decoder
+test_configs = [
+    ("LSTM", "LSTM", "Encoder: LSTM, Decoder: LSTM"),
+    ("LSTM", "GRU", "Encoder: LSTM, Decoder: GRU"),
+    ("GRU", "LSTM", "Encoder: GRU, Decoder: LSTM"),
+    ("GRU", "GRU", "Encoder: GRU, Decoder: GRU"),
+]
 
-# Подсчет параметров LSTM
-lstm_params = sum(p.numel() for p in model_lstm.parameters())
-print(f"   Количество параметров (LSTM): {lstm_params:,}")
+results = []
 
-# Тест forward pass
-x = torch.randn(batch_size, 3, img_h, img_w)
-tgt = torch.randint(0, num_classes, (batch_size, 20))
-try:
-    output = model_lstm(x, tgt)
-    print(f"   Output shape: {output.shape}")
-    print("   ✓ LSTM forward pass успешен")
-except Exception as e:
-    print(f"   ✗ Ошибка LSTM: {e}")
+for encoder_type, decoder_type, desc in test_configs:
+    print(f"\n{'=' * 80}")
+    print(f"Тест: {desc}")
+    print("=" * 80)
 
-# Тест 2: GRU encoder
-print("\n2. Тестирование GRU encoder...")
-model_gru = TRBAModel(
-    num_classes=num_classes,
-    hidden_size=hidden_size,
-    num_encoder_layers=num_encoder_layers,
-    encoder_type="GRU",
-    img_h=img_h,
-    img_w=img_w,
-)
+    try:
+        # Создаем модель
+        model = TRBAModel(
+            num_classes=num_classes,
+            hidden_size=hidden_size,
+            num_encoder_layers=num_encoder_layers,
+            encoder_type=encoder_type,
+            decoder_type=decoder_type,
+            img_h=img_h,
+            img_w=img_w,
+        )
 
-# Подсчет параметров GRU
-gru_params = sum(p.numel() for p in model_gru.parameters())
-print(f"   Количество параметров (GRU): {gru_params:,}")
+        # Подсчет параметров
+        params = sum(p.numel() for p in model.parameters())
+        print(f"   Количество параметров: {params:,}")
 
-# Тест forward pass
-try:
-    output = model_gru(x, tgt)
-    print(f"   Output shape: {output.shape}")
-    print("   ✓ GRU forward pass успешен")
-except Exception as e:
-    print(f"   ✗ Ошибка GRU: {e}")
+        # Тест forward pass (training)
+        x = torch.randn(batch_size, 3, img_h, img_w)
+        tgt = torch.randint(0, num_classes, (batch_size, 20))
 
-# Сравнение
-print("\n3. Сравнение моделей:")
-print(f"   Параметры LSTM: {lstm_params:,}")
-print(f"   Параметры GRU:  {gru_params:,}")
-diff = lstm_params - gru_params
-diff_pct = (diff / lstm_params) * 100
-print(f"   Разница: {diff:,} параметров ({diff_pct:.1f}%)")
-print(f"   GRU экономит ~{diff_pct:.0f}% параметров по сравнению с LSTM")
+        model.train()
+        output_train = model(model.encode(x), text=tgt, is_train=True)
+        print(f"   Training output shape: {output_train.shape}")
 
-# Тест 3: Проверка загрузки из конфига
-print("\n4. Тестирование инициализации через TRBA класс...")
-from src.manuscript.recognizers import TRBA
+        # Тест forward pass (inference greedy)
+        model.eval()
+        with torch.no_grad():
+            probs, preds = model(model.encode(x), is_train=False, mode="greedy")
+        print(f"   Greedy inference preds shape: {preds.shape}")
 
-try:
-    # Тест с LSTM
-    trba_lstm = TRBA(encoder_type="LSTM")
-    print("   ✓ TRBA с encoder_type='LSTM' инициализирован")
+        # Тест forward pass (inference beam)
+        with torch.no_grad():
+            probs, preds = model(
+                model.encode(x), is_train=False, mode="beam", beam_size=3
+            )
+        print(f"   Beam inference preds shape: {preds.shape}")
 
-    # Тест с GRU
-    trba_gru = TRBA(encoder_type="GRU")
-    print("   ✓ TRBA с encoder_type='GRU' инициализирован")
+        print(f"   ✓ Все тесты пройдены!")
+        results.append((desc, params, "✓ OK"))
 
-except Exception as e:
-    print(f"   ✗ Ошибка инициализации TRBA: {e}")
+    except Exception as e:
+        print(f"   ✗ Ошибка: {e}")
+        import traceback
 
-print("\n" + "=" * 60)
-print("Все тесты завершены!")
-print("=" * 60)
+        traceback.print_exc()
+        results.append((desc, 0, f"✗ FAILED: {str(e)[:50]}"))
+
+# Итоговая таблица
+print("\n" + "=" * 80)
+print("ИТОГОВАЯ ТАБЛИЦА РЕЗУЛЬТАТОВ")
+print("=" * 80)
+print(f"{'Конфигурация':<40} {'Параметры':>15} {'Статус':<20}")
+print("-" * 80)
+
+for desc, params, status in results:
+    params_str = f"{params:,}" if params > 0 else "N/A"
+    print(f"{desc:<40} {params_str:>15} {status:<20}")
+
+print("=" * 80)
+
+# Сравнение размеров моделей
+if len(results) == 4:
+    lstm_lstm = results[0][1]
+    gru_gru = results[3][1]
+
+    if lstm_lstm > 0 and gru_gru > 0:
+        diff = lstm_lstm - gru_gru
+        diff_pct = (diff / lstm_lstm) * 100
+
+        print(f"\n📊 Сравнение LSTM+LSTM vs GRU+GRU:")
+        print(f"   LSTM+LSTM: {lstm_lstm:,} параметров")
+        print(f"   GRU+GRU:   {gru_gru:,} параметров")
+        print(f"   Экономия:  {diff:,} параметров ({diff_pct:.1f}%)")
+        print(f"   GRU+GRU экономит ~{diff_pct:.0f}% параметров!")
+
+print("\n" + "=" * 80)
+print("Тестирование завершено!")
+print("=" * 80)

@@ -149,6 +149,7 @@ class TRBA:
         self.hidden_size = config.get("hidden_size", 256)
         self.num_encoder_layers = config.get("num_encoder_layers", 2)
         self.encoder_type = config.get("encoder_type", "LSTM")
+        self.decoder_type = config.get("decoder_type", "LSTM")
         self.img_h = config.get("img_h", 64)
         self.img_w = config.get("img_w", 256)
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
@@ -252,6 +253,7 @@ class TRBA:
             hidden_size=self.hidden_size,
             num_encoder_layers=self.num_encoder_layers,
             encoder_type=self.encoder_type,
+            decoder_type=self.decoder_type,
             img_h=self.img_h,
             img_w=self.img_w,
             cnn_in_channels=self.cnn_in_channels,
@@ -459,6 +461,7 @@ class TRBA:
         hidden_size: int = 256,
         num_encoder_layers: int = 2,
         encoder_type: str = "LSTM",
+        decoder_type: str = "LSTM",
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
         batch_size: int = 32,
@@ -525,6 +528,10 @@ class TRBA:
         encoder_type : {"LSTM", "GRU"}, optional
             Type of encoder RNN. "LSTM" uses BiLSTM (more expressive),
             "GRU" uses BiGRU (faster, less memory). Default is ``"LSTM"``.
+        decoder_type : {"LSTM", "GRU"}, optional
+            Type of decoder RNN in attention mechanism. "LSTM" uses LSTMCell
+            (more expressive), "GRU" uses GRUCell (faster, less memory).
+            Default is ``"LSTM"``.
         cnn_in_channels : int, optional
             Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
         cnn_out_channels : int, optional
@@ -723,6 +730,7 @@ class TRBA:
             "hidden_size": hidden_size,
             "num_encoder_layers": num_encoder_layers,
             "encoder_type": encoder_type,
+            "decoder_type": decoder_type,
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
             "batch_size": batch_size,
