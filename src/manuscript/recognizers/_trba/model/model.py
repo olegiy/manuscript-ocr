@@ -21,6 +21,21 @@ class BidirectionalLSTM(nn.Module):
         return out
 
 
+class BidirectionalGRU(nn.Module):
+    """Bidirectional GRU encoder layer (faster than LSTM, less memory)."""
+
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+        self.rnn = nn.GRU(input_size, hidden_size, bidirectional=True, batch_first=True)
+        self.linear = nn.Linear(hidden_size * 2, output_size)
+
+    def forward(self, x):
+        self.rnn.flatten_parameters()
+        h, _ = self.rnn(x)  # [B, T, 2H]
+        out = self.linear(h)  # [B, T, D]
+        return out
+
+
 class AttentionCell(nn.Module):
     def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
         super().__init__()
@@ -341,6 +356,7 @@ class TRBAModel(nn.Module):
         num_classes,
         hidden_size=256,
         num_encoder_layers=2,
+        encoder_type="LSTM",  # "LSTM" or "GRU"
         img_h=64,
         img_w=256,
         cnn_in_channels=3,
@@ -358,6 +374,7 @@ class TRBAModel(nn.Module):
         self.num_classes = num_classes
         self.hidden_size = hidden_size
         self.num_encoder_layers = num_encoder_layers
+        self.encoder_type = encoder_type.upper()
         self.img_h = img_h
         self.img_w = img_w
         self.cnn_in_channels = cnn_in_channels
@@ -374,12 +391,20 @@ class TRBAModel(nn.Module):
 
         enc_dim = self.cnn.out_channels
 
+        # Choose encoder type
+        if self.encoder_type == "LSTM":
+            encoder_class = BidirectionalLSTM
+        elif self.encoder_type == "GRU":
+            encoder_class = BidirectionalGRU
+        else:
+            raise ValueError(
+                f"Unknown encoder_type: {encoder_type}. Use 'LSTM' or 'GRU'"
+            )
+
         encoder_layers = []
         for i in range(num_encoder_layers):
             input_dim = enc_dim if i == 0 else hidden_size
-            encoder_layers.append(
-                BidirectionalLSTM(input_dim, hidden_size, hidden_size)
-            )
+            encoder_layers.append(encoder_class(input_dim, hidden_size, hidden_size))
         self.enc_rnn = nn.Sequential(*encoder_layers)
         enc_dim = hidden_size
 
