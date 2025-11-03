@@ -341,6 +341,10 @@ class TRBAModel(nn.Module):
         num_classes,
         hidden_size=256,
         num_encoder_layers=2,
+        img_h=64,
+        img_w=256,
+        cnn_in_channels=3,
+        cnn_out_channels=512,
         sos_id: int = 1,
         eos_id: int = 2,
         pad_id: int = 0,
@@ -354,10 +358,14 @@ class TRBAModel(nn.Module):
         self.num_classes = num_classes
         self.hidden_size = hidden_size
         self.num_encoder_layers = num_encoder_layers
+        self.img_h = img_h
+        self.img_w = img_w
+        self.cnn_in_channels = cnn_in_channels
+        self.cnn_out_channels = cnn_out_channels
 
         self.cnn = SEResNet31(
-            in_channels=3,
-            out_channels=512,
+            in_channels=cnn_in_channels,
+            out_channels=cnn_out_channels,
             dropblock_p=dropblock_p,
             dropblock_block_size=dropblock_block_size,
         )

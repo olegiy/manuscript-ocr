@@ -150,6 +150,8 @@ class TRBA:
         self.num_encoder_layers = config.get("num_encoder_layers", 2)
         self.img_h = config.get("img_h", 64)
         self.img_w = config.get("img_w", 256)
+        self.cnn_in_channels = config.get("cnn_in_channels", 3)
+        self.cnn_out_channels = config.get("cnn_out_channels", 512)
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -248,6 +250,10 @@ class TRBA:
             num_classes=len(self.itos),
             hidden_size=self.hidden_size,
             num_encoder_layers=self.num_encoder_layers,
+            img_h=self.img_h,
+            img_w=self.img_w,
+            cnn_in_channels=self.cnn_in_channels,
+            cnn_out_channels=self.cnn_out_channels,
             sos_id=self.sos_id,
             eos_id=self.eos_id,
             pad_id=self.pad_id,
@@ -450,6 +456,8 @@ class TRBA:
         max_len: int = 25,
         hidden_size: int = 256,
         num_encoder_layers: int = 2,
+        cnn_in_channels: int = 3,
+        cnn_out_channels: int = 512,
         batch_size: int = 32,
         epochs: int = 20,
         lr: float = 1e-3,
@@ -511,6 +519,10 @@ class TRBA:
             Hidden dimension size for RNN encoder/decoder. Default is 256.
         num_encoder_layers : int, optional
             Number of Bidirectional LSTM layers in the encoder. Default is 2.
+        cnn_in_channels : int, optional
+            Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
+        cnn_out_channels : int, optional
+            Number of output channels from CNN backbone. Default is 512.
         batch_size : int, optional
             Training batch size. Default is 32.
         epochs : int, optional
@@ -704,6 +716,8 @@ class TRBA:
             "max_len": max_len,
             "hidden_size": hidden_size,
             "num_encoder_layers": num_encoder_layers,
+            "cnn_in_channels": cnn_in_channels,
+            "cnn_out_channels": cnn_out_channels,
             "batch_size": batch_size,
             "epochs": epochs,
             "lr": lr,

@@ -300,10 +300,17 @@ def run_training(cfg: Config, device: str = "cuda"):
 
     # --- модель ---
     num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
+    cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
+    cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
+    
     model = TRBAModel(
         num_classes=num_classes,
         hidden_size=hidden_size,
         num_encoder_layers=num_encoder_layers,
+        img_h=img_h,
+        img_w=img_w,
+        cnn_in_channels=cnn_in_channels,
+        cnn_out_channels=cnn_out_channels,
         sos_id=SOS,
         eos_id=EOS,
         pad_id=PAD,
