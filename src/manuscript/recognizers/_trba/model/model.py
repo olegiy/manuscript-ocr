@@ -340,6 +340,7 @@ class TRBAModel(nn.Module):
         self,
         num_classes,
         hidden_size=256,
+        num_encoder_layers=2,
         sos_id: int = 1,
         eos_id: int = 2,
         pad_id: int = 0,
@@ -352,6 +353,7 @@ class TRBAModel(nn.Module):
 
         self.num_classes = num_classes
         self.hidden_size = hidden_size
+        self.num_encoder_layers = num_encoder_layers
 
         self.cnn = SEResNet31(
             in_channels=3,
@@ -364,10 +366,13 @@ class TRBAModel(nn.Module):
 
         enc_dim = self.cnn.out_channels
 
-        self.enc_rnn = nn.Sequential(
-            BidirectionalLSTM(enc_dim, hidden_size, hidden_size),
-            BidirectionalLSTM(hidden_size, hidden_size, hidden_size),
-        )
+        encoder_layers = []
+        for i in range(num_encoder_layers):
+            input_dim = enc_dim if i == 0 else hidden_size
+            encoder_layers.append(
+                BidirectionalLSTM(input_dim, hidden_size, hidden_size)
+            )
+        self.enc_rnn = nn.Sequential(*encoder_layers)
         enc_dim = hidden_size
 
         self.enc_dropout = nn.Dropout(enc_dropout_p)

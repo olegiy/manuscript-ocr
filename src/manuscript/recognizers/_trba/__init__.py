@@ -147,6 +147,7 @@ class TRBA:
 
         self.max_length = config.get("max_len", 25)
         self.hidden_size = config.get("hidden_size", 256)
+        self.num_encoder_layers = config.get("num_encoder_layers", 2)
         self.img_h = config.get("img_h", 64)
         self.img_w = config.get("img_w", 256)
 
@@ -246,6 +247,7 @@ class TRBA:
         model = TRBAModel(
             num_classes=len(self.itos),
             hidden_size=self.hidden_size,
+            num_encoder_layers=self.num_encoder_layers,
             sos_id=self.sos_id,
             eos_id=self.eos_id,
             pad_id=self.pad_id,
@@ -447,6 +449,7 @@ class TRBA:
         img_w: int = 256,
         max_len: int = 25,
         hidden_size: int = 256,
+        num_encoder_layers: int = 2,
         batch_size: int = 32,
         epochs: int = 20,
         lr: float = 1e-3,
@@ -506,6 +509,8 @@ class TRBA:
             Maximum sequence length for text recognition. Default is 25.
         hidden_size : int, optional
             Hidden dimension size for RNN encoder/decoder. Default is 256.
+        num_encoder_layers : int, optional
+            Number of Bidirectional LSTM layers in the encoder. Default is 2.
         batch_size : int, optional
             Training batch size. Default is 32.
         epochs : int, optional
@@ -698,6 +703,7 @@ class TRBA:
             "img_w": img_w,
             "max_len": max_len,
             "hidden_size": hidden_size,
+            "num_encoder_layers": num_encoder_layers,
             "batch_size": batch_size,
             "epochs": epochs,
             "lr": lr,

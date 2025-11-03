@@ -299,9 +299,11 @@ def run_training(cfg: Config, device: str = "cuda"):
     logger.info(f"Charset loaded: {num_classes} tokens")
 
     # --- модель ---
+    num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
     model = TRBAModel(
         num_classes=num_classes,
         hidden_size=hidden_size,
+        num_encoder_layers=num_encoder_layers,
         sos_id=SOS,
         eos_id=EOS,
         pad_id=PAD,
