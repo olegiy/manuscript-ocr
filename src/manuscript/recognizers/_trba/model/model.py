@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import Optional
 
 from .seresnet31 import SEResNet31
+from .unet import CompactUNet
 
 
 class BidirectionalLSTM(nn.Module):
@@ -460,6 +461,7 @@ class TRBAModel(nn.Module):
         num_encoder_layers=2,
         encoder_type="LSTM",  # "LSTM" or "GRU"
         decoder_type="LSTM",  # "LSTM" or "GRU"
+        use_unet=False,  # NEW: U-Net для очистки фона
         img_h=64,
         img_w=256,
         cnn_in_channels=3,
@@ -479,10 +481,26 @@ class TRBAModel(nn.Module):
         self.num_encoder_layers = num_encoder_layers
         self.encoder_type = encoder_type.upper()
         self.decoder_type = decoder_type.upper()
+        self.use_unet = use_unet
         self.img_h = img_h
         self.img_w = img_w
         self.cnn_in_channels = cnn_in_channels
         self.cnn_out_channels = cnn_out_channels
+
+        # U-Net для создания бинарной маски (опционально)
+        if self.use_unet:
+            self.unet = CompactUNet(
+                in_channels=cnn_in_channels,
+                features=[
+                    32,
+                    64,
+                    128,
+                ],  # Увеличенная архитектура для более тонкой работы
+                hard_binarize=True,  # Жесткая бинаризация (0 или 1)
+                threshold=0.5,  # Порог бинаризации
+            )
+        else:
+            self.unet = None
 
         self.cnn = SEResNet31(
             in_channels=cnn_in_channels,
@@ -528,12 +546,38 @@ class TRBAModel(nn.Module):
         )
 
     def encode(self, x):
-        f = self.cnn(x)  # [B, C, H, W]
+        """
+        Encode input images to feature sequences.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input images [B, C, H, W].
+
+        Returns
+        -------
+        Tuple[torch.Tensor, Optional[torch.Tensor]]
+            - Encoded features [B, W, H]
+            - U-Net binary mask [B, 1, H, W] if use_unet=True, else None
+        """
+        # Apply U-Net binary mask if enabled
+        unet_mask = None
+        if self.use_unet:
+            unet_mask = self.unet(x)  # [B, 1, H, W] - soft mask [0, 1] from sigmoid
+
+            # РАДИКАЛЬНО: заменяем RGB изображение на бинарную маску!
+            # Вместо x * mask, отправляем саму маску в CNN
+            # Повторяем одноканальную маску на 3 канала для совместимости с ResNet
+            x_input = unet_mask.repeat(1, 3, 1, 1)  # [B, 1, H, W] -> [B, 3, H, W]
+        else:
+            x_input = x
+
+        f = self.cnn(x_input)  # [B, C, H, W]
         f = self.pool(f).squeeze(2)  # [B, C, W]
         f = f.permute(0, 2, 1)  # [B, W, C]
         f = self.enc_rnn(f)  # [B, W, H]
         f = self.enc_dropout(f)
-        return f
+        return f, unet_mask
 
     def forward(
         self,
@@ -545,9 +589,34 @@ class TRBAModel(nn.Module):
         beam_size: int = 5,
         alpha: float = 0.6,
         temperature: float = 1.0,
+        return_unet_output: bool = False,
+        return_dict: bool = False,
     ):
-        enc = self.encode(x)
-        return self.attn(
+        """
+        Forward pass through the model.
+
+        Parameters
+        ----------
+        return_unet_output : bool, optional
+            If True, returns tuple of (probs, preds, unet_output).
+            If False, returns tuple of (probs, preds) as before.
+            Default is False for backward compatibility.
+        return_dict : bool, optional
+            If True, returns dict with keys: 'output', 'unet_output'.
+            Useful for training with U-Net auxiliary loss.
+            Default is False.
+
+        Returns
+        -------
+        tuple, Tensor, or dict
+            - If return_dict=True: {'output': logits/probs/preds, 'unet_output': x_cleaned}
+            - If is_train=True and not return_dict: logits [B, T, V]
+            - If is_train=False and return_unet_output=False: (probs, preds)
+            - If is_train=False and return_unet_output=True: (probs, preds, unet_mask)
+        """
+        enc, unet_mask = self.encode(x)
+
+        result = self.attn(
             enc,
             text=text,
             is_train=is_train,
@@ -557,3 +626,22 @@ class TRBAModel(nn.Module):
             alpha=alpha,
             temperature=temperature,
         )
+
+        # Return dict format for visualization
+        if return_dict:
+            return {
+                "output": result,
+                "unet_mask": unet_mask,
+            }
+
+        # В training mode возвращается только logits
+        if is_train:
+            return result  # logits
+
+        # В inference mode возвращается (probs, preds)
+        probs, preds = result
+
+        if return_unet_output:
+            return probs, preds, unet_mask
+        else:
+            return probs, preds

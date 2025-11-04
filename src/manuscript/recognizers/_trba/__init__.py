@@ -150,6 +150,7 @@ class TRBA:
         self.num_encoder_layers = config.get("num_encoder_layers", 2)
         self.encoder_type = config.get("encoder_type", "LSTM")
         self.decoder_type = config.get("decoder_type", "LSTM")
+        self.use_unet = config.get("use_unet", False)
         self.img_h = config.get("img_h", 64)
         self.img_w = config.get("img_w", 256)
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
@@ -254,6 +255,7 @@ class TRBA:
             num_encoder_layers=self.num_encoder_layers,
             encoder_type=self.encoder_type,
             decoder_type=self.decoder_type,
+            use_unet=self.use_unet,
             img_h=self.img_h,
             img_w=self.img_w,
             cnn_in_channels=self.cnn_in_channels,
@@ -462,6 +464,7 @@ class TRBA:
         num_encoder_layers: int = 2,
         encoder_type: str = "LSTM",
         decoder_type: str = "LSTM",
+        use_unet: bool = False,
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
         batch_size: int = 32,
@@ -532,6 +535,12 @@ class TRBA:
             Type of decoder RNN in attention mechanism. "LSTM" uses LSTMCell
             (more expressive), "GRU" uses GRUCell (faster, less memory).
             Default is ``"LSTM"``.
+        use_unet : bool, optional
+            If ``True``, adds a compact U-Net module before the CNN backbone
+            for learnable background removal. The U-Net is trained end-to-end
+            with the recognition loss (no separate segmentation loss needed).
+            This can improve recognition on noisy images with complex backgrounds.
+            Default is ``False``.
         cnn_in_channels : int, optional
             Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
         cnn_out_channels : int, optional
@@ -731,6 +740,7 @@ class TRBA:
             "num_encoder_layers": num_encoder_layers,
             "encoder_type": encoder_type,
             "decoder_type": decoder_type,
+            "use_unet": use_unet,
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
             "batch_size": batch_size,

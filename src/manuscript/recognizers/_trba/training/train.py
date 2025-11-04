@@ -6,6 +6,8 @@ import random
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List
 
+import cv2
+import numpy as np
 import torch
 import torch.cuda.amp as amp
 import torch.nn as nn
@@ -312,7 +314,7 @@ def visualize_predictions_tensorboard(
             )
 
             # Prediction
-            encoded = model.encode(img_device)
+            encoded, unet_mask = model.encode(img_device)
             _, pred_ids = model.attn(encoded, **forward_kwargs)
             pred_text = decode_tokens(
                 pred_ids[0].cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
@@ -331,8 +333,53 @@ def visualize_predictions_tensorboard(
             img_np = (img_np.transpose(1, 2, 0) * 255).astype(np.uint8)
             img_pil = Image.fromarray(img_np)
 
+            # Получаем размеры изображения
+            img_w, img_h = img_pil.size  # (width, height)
+
+            # Если есть U-Net mask, создаем композицию: [original | binary_mask (input to CNN)]
+            if unet_mask is not None:
+                # U-Net mask [1, H, W] -> это и есть вход в CNN!
+                mask_np = unet_mask[0, 0].cpu().numpy()  # [H, W]
+
+                # Визуализация маски (grayscale -> RGB для отображения)
+                # Это то, что реально видит CNN (повторенное на 3 канала)
+                mask_vis = (mask_np * 255).astype(np.uint8)
+                mask_rgb = cv2.cvtColor(mask_vis, cv2.COLOR_GRAY2RGB)
+                mask_pil = Image.fromarray(mask_rgb)
+
+                # Создаем горизонтальную композицию: original | binary_input
+                combined_width = img_w * 2 + 10  # gap between images
+                label_height = 15  # высота для подписей
+                combined_img = Image.new(
+                    "RGB", (combined_width, img_h + label_height), color=(255, 255, 255)
+                )
+
+                # Вставляем изображения со сдвигом вниз для подписей
+                combined_img.paste(img_pil, (0, label_height))
+                combined_img.paste(mask_pil, (img_w + 10, label_height))
+
+                # Добавляем подписи
+                draw_labels = ImageDraw.Draw(combined_img)
+                try:
+                    label_font = ImageFont.truetype("arial.ttf", 10)
+                except:
+                    label_font = ImageFont.load_default()
+
+                draw_labels.text(
+                    (5, 2), "Original (U-Net Input)", fill=(0, 0, 0), font=label_font
+                )
+                draw_labels.text(
+                    (img_w + 15, 2),
+                    "Binary Mask (CNN Input)",
+                    fill=(0, 0, 0),
+                    font=label_font,
+                )
+
+                img_pil = combined_img
+                img_w = combined_width
+                img_h = img_h + label_height
+
             # Добавляем область для текста
-            img_h, img_w = img_pil.size[1], img_pil.size[0]
             text_height = 60
             new_img = Image.new(
                 "RGB", (img_w, img_h + text_height), color=(255, 255, 255)
@@ -496,6 +543,7 @@ def run_training(cfg: Config, device: str = "cuda"):
     num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
     encoder_type = getattr(cfg, "encoder_type", "LSTM")
     decoder_type = getattr(cfg, "decoder_type", "LSTM")
+    use_unet = getattr(cfg, "use_unet", False)
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
 
@@ -505,6 +553,7 @@ def run_training(cfg: Config, device: str = "cuda"):
         num_encoder_layers=num_encoder_layers,
         encoder_type=encoder_type,
         decoder_type=decoder_type,
+        use_unet=use_unet,
         img_h=img_h,
         img_w=img_w,
         cnn_in_channels=cnn_in_channels,
@@ -682,7 +731,17 @@ def run_training(cfg: Config, device: str = "cuda"):
         f"Parameters: trainable={n_trainable:,} | frozen={n_frozen:,} | total={n_total:,}"
     )
 
+    # --- loss ---
+    # U-Net обучается end-to-end через основной loss (как TPS)
+    # Никаких auxiliary losses не нужно!
     criterion = nn.CrossEntropyLoss(ignore_index=PAD)
+
+    if use_unet:
+        logger.info(
+            "Using U-Net attention mask (trained end-to-end via recognition loss)"
+        )
+    else:
+        logger.info("Using standard architecture (no U-Net)")
 
     # --- optimizer ---
     trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -926,12 +985,14 @@ def run_training(cfg: Config, device: str = "cuda"):
 
             optimizer.zero_grad(set_to_none=True)
             with amp.autocast():
+                # Простой forward pass - U-Net обучается end-to-end
                 logits = model(
                     imgs, text=text_in, is_train=True, batch_max_length=max_len
                 )  # [B,T,V]
                 loss = criterion(
                     logits.reshape(-1, logits.size(-1)), target_y.reshape(-1)
                 )
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -940,6 +1001,7 @@ def run_training(cfg: Config, device: str = "cuda"):
             total_train_loss += loss_val
             writer.add_scalar("Loss/train_step", loss_val, global_step)
             writer.add_scalar("LR", optimizer.param_groups[0]["lr"], global_step)
+
             global_step += 1
 
             pbar.set_postfix(
@@ -953,6 +1015,10 @@ def run_training(cfg: Config, device: str = "cuda"):
         avg_val_loss = None
         val_acc = None
         val_cer = None
+        val_wer = None
+
+        writer.add_scalar("Loss/train_epoch", avg_train_loss, epoch)
+        logger.info(f"Epoch {epoch}/{epochs}: train_loss={avg_train_loss:.4f}")
         val_wer = None
 
         writer.add_scalar("Loss/train_epoch", avg_train_loss, epoch)
