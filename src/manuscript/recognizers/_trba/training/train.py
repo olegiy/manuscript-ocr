@@ -498,6 +498,8 @@ def run_training(cfg: Config, device: str = "cuda"):
     decoder_type = getattr(cfg, "decoder_type", "LSTM")
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
+    use_ctc_auxiliary = getattr(cfg, "use_ctc_auxiliary", False)
+    ctc_weight = getattr(cfg, "ctc_weight", 0.3)
 
     model = TRBAModel(
         num_classes=num_classes,
@@ -513,6 +515,8 @@ def run_training(cfg: Config, device: str = "cuda"):
         eos_id=EOS,
         pad_id=PAD,
         blank_id=BLANK,
+        use_ctc_auxiliary=use_ctc_auxiliary,
+        ctc_weight=ctc_weight,
     ).to(device)
 
     # --- optional pretrained weights ---
@@ -918,27 +922,51 @@ def run_training(cfg: Config, device: str = "cuda"):
         # train
         model.train()
         total_train_loss = 0.0
+        total_attn_loss = 0.0
+        total_ctc_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Train {epoch}/{epochs}", leave=False)
         for imgs, text_in, target_y, lengths in pbar:
             imgs = imgs.to(device, non_blocking=pin_memory)
             text_in = text_in.to(device, non_blocking=pin_memory)
             target_y = target_y.to(device, non_blocking=pin_memory)
+            lengths = lengths.to(device, non_blocking=pin_memory)
 
             optimizer.zero_grad(set_to_none=True)
             with amp.autocast():
+                # Encode for potential CTC loss
+                enc_output = model.encode(imgs)
+
+                # Attention-based decoder
                 logits = model(
                     imgs, text=text_in, is_train=True, batch_max_length=max_len
                 )  # [B,T,V]
-                loss = criterion(
+                attn_loss = criterion(
                     logits.reshape(-1, logits.size(-1)), target_y.reshape(-1)
                 )
+
+                # Auxiliary CTC loss if enabled
+                loss = attn_loss
+                ctc_loss_val = torch.tensor(0.0, device=device)
+                if use_ctc_auxiliary:
+                    ctc_loss_val = model.compute_ctc_loss(enc_output, target_y, lengths)
+                    loss = attn_loss * (1 - ctc_weight) + ctc_loss_val * ctc_weight
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
             loss_val = float(loss.item())
+            attn_loss_val = float(attn_loss.item())
+            ctc_loss_scalar = float(ctc_loss_val.item())
+
             total_train_loss += loss_val
+            total_attn_loss += attn_loss_val
+            total_ctc_loss += ctc_loss_scalar
+
             writer.add_scalar("Loss/train_step", loss_val, global_step)
+            writer.add_scalar("Loss/train_attn_step", attn_loss_val, global_step)
+            if use_ctc_auxiliary:
+                writer.add_scalar("Loss/train_ctc_step", ctc_loss_scalar, global_step)
             writer.add_scalar("LR", optimizer.param_groups[0]["lr"], global_step)
             global_step += 1
 
@@ -947,6 +975,8 @@ def run_training(cfg: Config, device: str = "cuda"):
             )
 
         avg_train_loss = total_train_loss / max(1, len(train_loader))
+        avg_attn_loss = total_attn_loss / max(1, len(train_loader))
+        avg_ctc_loss = total_ctc_loss / max(1, len(train_loader))
 
         should_eval = ((epoch - start_epoch) % eval_every == 0) or (epoch == epochs)
 
@@ -956,6 +986,9 @@ def run_training(cfg: Config, device: str = "cuda"):
         val_wer = None
 
         writer.add_scalar("Loss/train_epoch", avg_train_loss, epoch)
+        writer.add_scalar("Loss/train_attn_epoch", avg_attn_loss, epoch)
+        if use_ctc_auxiliary:
+            writer.add_scalar("Loss/train_ctc_epoch", avg_ctc_loss, epoch)
 
         if should_eval:
             model.eval()

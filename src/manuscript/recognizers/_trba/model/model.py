@@ -471,6 +471,8 @@ class TRBAModel(nn.Module):
         enc_dropout_p: float = 0.1,
         dropblock_p: float = 0.0,
         dropblock_block_size: int = 5,
+        use_ctc_auxiliary: bool = False,
+        ctc_weight: float = 0.3,
     ):
         super().__init__()
 
@@ -527,6 +529,16 @@ class TRBAModel(nn.Module):
             decoder_type=self.decoder_type,
         )
 
+        # CTC auxiliary head for stronger encoder learning
+        self.use_ctc_auxiliary = use_ctc_auxiliary
+        self.ctc_weight = ctc_weight
+        if self.use_ctc_auxiliary:
+            # CTC head: linear projection from encoder output to num_classes
+            self.ctc_head = nn.Linear(hidden_size, num_classes)
+            self.ctc_loss = nn.CTCLoss(
+                blank=blank_id, reduction="mean", zero_infinity=True
+            )
+
     def encode(self, x):
         f = self.cnn(x)  # [B, C, H, W]
         f = self.pool(f).squeeze(2)  # [B, C, W]
@@ -534,6 +546,57 @@ class TRBAModel(nn.Module):
         f = self.enc_rnn(f)  # [B, W, H]
         f = self.enc_dropout(f)
         return f
+
+    def compute_ctc_loss(self, enc_output, target_y, target_lengths):
+        """
+        Compute CTC loss for auxiliary supervision.
+
+        Args:
+            enc_output: [B, W, H] encoder output
+            target_y: [B*T] flattened targets
+            target_lengths: [B] actual lengths of each sequence
+
+        Returns:
+            ctc_loss value or 0 if CTC is disabled
+        """
+        if not self.use_ctc_auxiliary:
+            return torch.tensor(0.0, device=enc_output.device)
+
+        # Project encoder output to vocab space
+        # [B, W, H] -> [B, W, num_classes]
+        ctc_logits = self.ctc_head(enc_output)  # [B, W, V]
+
+        # CTC expects: [T, B, V] where T is max sequence length
+        ctc_logits = ctc_logits.permute(1, 0, 2)  # [W, B, V]
+
+        # Get sequence lengths from encoder (W dimension)
+        B = enc_output.size(0)
+        input_lengths = torch.full(
+            (B,), enc_output.size(1), dtype=torch.long, device=enc_output.device
+        )
+
+        # Reshape target_y to get actual target sequences
+        # target_y is [B*T], need to split by batch
+        # But we need target_lengths to know where each sequence ends
+
+        # For simplicity: create target_lengths from non-PAD positions
+        target_y_reshaped = target_y.reshape(B, -1)  # [B, T]
+        target_lengths = (target_y_reshaped != self.attn.pad_id).sum(dim=1)  # [B]
+
+        # Flatten targets for CTC
+        target_y_flat = target_y.reshape(B, -1)[
+            :, : (target_lengths.max().item())
+        ]  # [B, T_max]
+
+        try:
+            ctc_loss_val = self.ctc_loss(
+                ctc_logits, target_y_flat, input_lengths, target_lengths
+            )
+        except:
+            # If CTC fails (e.g., target_lengths > input_lengths), return 0
+            ctc_loss_val = torch.tensor(0.0, device=enc_output.device)
+
+        return ctc_loss_val
 
     def forward(
         self,

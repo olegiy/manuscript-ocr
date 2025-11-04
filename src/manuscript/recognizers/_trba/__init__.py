@@ -464,6 +464,8 @@ class TRBA:
         decoder_type: str = "LSTM",
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
+        use_ctc_auxiliary: bool = False,
+        ctc_weight: float = 0.3,
         batch_size: int = 32,
         epochs: int = 20,
         lr: float = 1e-3,
@@ -536,6 +538,12 @@ class TRBA:
             Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
         cnn_out_channels : int, optional
             Number of output channels from CNN backbone. Default is 512.
+        use_ctc_auxiliary : bool, optional
+            Use CTC loss as auxiliary supervision for encoder. Helps strengthen
+            encoder learning by providing direct guidance. Default is ``False``.
+        ctc_weight : float, optional
+            Weight for CTC loss in combined loss: ``loss = attn_loss * (1 - ctc_weight) + ctc_loss * ctc_weight``.
+            Used only if ``use_ctc_auxiliary=True``. Default is 0.3.
         batch_size : int, optional
             Training batch size. Default is 32.
         epochs : int, optional
@@ -733,6 +741,8 @@ class TRBA:
             "decoder_type": decoder_type,
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
+            "use_ctc_auxiliary": use_ctc_auxiliary,
+            "ctc_weight": ctc_weight,
             "batch_size": batch_size,
             "epochs": epochs,
             "lr": lr,
