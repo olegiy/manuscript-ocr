@@ -193,10 +193,7 @@ class Pipeline:
     def get_text(self, page) -> str:
         lines = []
         for block in page.blocks:
-            sorted_words = sorted(
-                block.words, key=lambda w: min(p[0] for p in w.polygon)
-            )
-            texts = [w.text for w in sorted_words if getattr(w, "text", None)]
+            texts = [w.text for w in block.words if getattr(w, "text", None)]
             if texts:
                 lines.append(" ".join(texts))
         return "\n".join(lines)
