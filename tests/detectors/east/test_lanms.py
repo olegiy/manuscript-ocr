@@ -207,24 +207,292 @@ def test_normalize_polygon_variants():
         np.testing.assert_allclose(norm, ref, rtol=1e-5)
 
 
-"""
-def test_standard_nms_empty():
-    # Пустой ввод => пустой вывод
-    kept_polys, kept_scores = standard_nms([], [], 0.5)
-    assert kept_polys == []
-    assert kept_scores == []
+# --- Дополнительные тесты для повышения покрытия ---
+
+
+def test_standard_nms_empty_arrays():
+    """Тест standard_nms с пустыми массивами"""
+    polys = np.array([], dtype=np.float64)
+    scores = np.array([], dtype=np.float64)
+    
+    kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
+    
+    assert kept_polys.size == 0
+    assert kept_scores.size == 0
 
 
 def test_locality_aware_nms_empty():
-    # Пустой ввод => пустой вывод
-    out = locality_aware_nms(np.zeros((0, 9), dtype=np.float32), 0.5)
-    assert out.shape == (0,)
+    """Тест locality_aware_nms с пустым входом"""
+    boxes = np.zeros((0, 9), dtype=np.float32)
+    
+    result = locality_aware_nms(boxes, 0.5)
+    
+    assert result.shape == (0, 9)
+    assert result.dtype == np.float32
 
 
-def test_standard_nms_order():
-    polys = [np.zeros((4, 2), dtype=np.float64) for _ in range(3)]
-    scores = [0.2, 0.9, 0.5]
-    kept_polys, kept_scores = standard_nms(polys, scores, 0.1)
-    # Проверяем, что наивысшие оценки сохраняются первыми
-    assert kept_scores[0] == pytest.approx(0.9)
-"""
+def test_locality_aware_nms_none_input():
+    """Тест locality_aware_nms с None входом"""
+    result = locality_aware_nms(None, 0.5)
+    
+    assert result.shape == (0, 9)
+    assert result.dtype == np.float32
+
+
+def test_standard_nms_score_ordering():
+    """Тест что standard_nms сохраняет правильный порядок по score"""
+    polys = [
+        np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64),
+        np.array([[100, 0], [110, 0], [110, 10], [100, 10]], dtype=np.float64),
+        np.array([[200, 0], [210, 0], [210, 10], [200, 10]], dtype=np.float64),
+    ]
+    scores = [0.3, 0.9, 0.6]  # Не упорядочены
+    
+    kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
+    
+    # Все 3 бокса не пересекаются, все должны остаться
+    assert len(kept_polys) == 3
+    # Первый в результате должен быть с наивысшим score
+    assert kept_scores[0] == 0.9
+
+
+def test_standard_nms_single_box():
+    """Тест standard_nms с одним боксом"""
+    polys = [np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)]
+    scores = [0.9]
+    
+    kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
+    
+    assert len(kept_polys) == 1
+    assert kept_scores[0] == 0.9
+
+
+def test_standard_nms_all_overlapping():
+    """Тест standard_nms когда все боксы пересекаются"""
+    # Все боксы примерно в одном месте
+    polys = [
+        np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64),
+        np.array([[1, 1], [11, 1], [11, 11], [1, 11]], dtype=np.float64),
+        np.array([[2, 2], [12, 2], [12, 12], [2, 12]], dtype=np.float64),
+    ]
+    scores = [0.9, 0.8, 0.7]
+    
+    kept_polys, kept_scores = standard_nms(polys, scores, iou_threshold=0.1)
+    
+    # Должен остаться только один (с наивысшим score)
+    assert len(kept_polys) == 1
+    assert kept_scores[0] == 0.9
+
+
+def test_locality_aware_nms_single_box():
+    """Тест locality_aware_nms с одним боксом"""
+    boxes = np.array([[0, 0, 10, 0, 10, 10, 0, 10, 0.9]], dtype=np.float32)
+    
+    result = locality_aware_nms(boxes, 0.5)
+    
+    assert result.shape[0] == 1
+    assert result.shape[1] == 9
+
+
+def test_locality_aware_nms_merging_nearby_boxes():
+    """Тест что locality_aware_nms объединяет близкие боксы"""
+    # Два очень близких бокса с высоким IoU
+    boxes = np.array(
+        [
+            [0, 0, 10, 0, 10, 10, 0, 10, 0.9],
+            [1, 1, 11, 1, 11, 11, 1, 11, 0.85],
+        ],
+        dtype=np.float32,
+    )
+    
+    result = locality_aware_nms(boxes, iou_threshold=0.3)
+    
+    # Должны объединиться в один
+    assert result.shape[0] == 1
+
+
+def test_locality_aware_nms_with_nan_protection():
+    """Тест защиты от NaN в locality_aware_nms"""
+    # Боксы с очень маленькими scores для проверки защиты от деления на ноль
+    boxes = np.array(
+        [
+            [0, 0, 10, 0, 10, 10, 0, 10, 1e-10],
+            [1, 1, 11, 1, 11, 11, 1, 11, 1e-10],
+        ],
+        dtype=np.float32,
+    )
+    
+    result = locality_aware_nms(boxes, iou_threshold=0.3)
+    
+    # Не должно быть NaN значений
+    assert np.isfinite(result).all()
+
+
+def test_locality_aware_nms_score_max_preservation():
+    """Тест что при объединении сохраняется максимальный score"""
+    boxes = np.array(
+        [
+            [0, 0, 10, 0, 10, 10, 0, 10, 0.7],
+            [1, 1, 11, 1, 11, 11, 1, 11, 0.95],  # Более высокий score
+        ],
+        dtype=np.float32,
+    )
+    
+    result = locality_aware_nms(boxes, iou_threshold=0.3)
+    
+    # Объединенный бокс должен иметь максимальный score
+    if result.shape[0] > 0:
+        assert result[0, 8] >= 0.95 or np.isclose(result[0, 8], 0.95, rtol=0.01)
+
+
+def test_polygon_area_large_polygon():
+    """Тест площади большого полигона"""
+    poly = np.array(
+        [[0, 0], [1000, 0], [1000, 500], [0, 500]], dtype=np.float64
+    )
+    area = polygon_area(poly)
+    expected = 1000 * 500  # 500000
+    np.testing.assert_allclose(area, expected, rtol=1e-5)
+
+
+def test_polygon_area_negative_coordinates():
+    """Тест площади с отрицательными координатами"""
+    poly = np.array([[-10, -10], [10, -10], [10, 10], [-10, 10]], dtype=np.float64)
+    area = polygon_area(poly)
+    expected = 20 * 20  # 400
+    np.testing.assert_allclose(area, expected, rtol=1e-5)
+
+
+def test_polygon_iou_partial_overlap():
+    """Тест IoU с частичным пересечением"""
+    poly1 = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    poly2 = np.array([[5, 5], [15, 5], [15, 15], [5, 15]], dtype=np.float64)
+    
+    iou = polygon_iou(poly1, poly2)
+    
+    # Пересечение 5x5 = 25, объединение = 100 + 100 - 25 = 175
+    expected = 25 / 175
+    assert np.isclose(iou, expected, rtol=1e-3)
+
+
+def test_polygon_iou_one_inside_other():
+    """Тест IoU когда один полигон внутри другого"""
+    poly1 = np.array([[0, 0], [20, 0], [20, 20], [0, 20]], dtype=np.float64)
+    poly2 = np.array([[5, 5], [15, 5], [15, 15], [5, 15]], dtype=np.float64)
+    
+    iou = polygon_iou(poly1, poly2)
+    
+    # poly2 полностью внутри poly1
+    # Пересечение = 100, poly1 = 400, poly2 = 100
+    # IoU = 100 / 400 = 0.25
+    assert iou > 0
+    assert iou < 1
+
+
+def test_polygon_intersection_complex_shape():
+    """Тест пересечения сложных форм"""
+    poly1 = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    poly2 = np.array([[5, -5], [15, -5], [15, 5], [5, 5]], dtype=np.float64)
+    
+    inter = polygon_intersection(poly1, poly2)
+    
+    # Должно быть пересечение
+    assert inter.shape[0] > 0
+
+
+def test_normalize_polygon_already_normalized():
+    """Тест normalize_polygon с уже нормализованным полигоном"""
+    ref = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    poly = ref.copy()
+    
+    normalized = normalize_polygon(ref, poly)
+    
+    np.testing.assert_allclose(normalized, ref, rtol=1e-5)
+
+
+def test_normalize_polygon_reversed():
+    """Тест normalize_polygon с обратным порядком вершин"""
+    ref = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    poly = np.array([[0, 10], [10, 10], [10, 0], [0, 0]], dtype=np.float64)  # Обратный
+    
+    normalized = normalize_polygon(ref, poly)
+    
+    # После нормализации должен совпадать с ref
+    np.testing.assert_allclose(normalized, ref, rtol=1e-5)
+
+
+def test_should_merge_exactly_at_threshold():
+    """Тест should_merge точно на пороге"""
+    poly1 = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    poly2 = np.array([[5, 5], [15, 5], [15, 15], [5, 15]], dtype=np.float64)
+    
+    iou = polygon_iou(poly1, poly2)
+    
+    # Проверяем граничный случай
+    assert should_merge(poly1, poly2, iou - 0.001)
+    assert not should_merge(poly1, poly2, iou + 0.001)
+
+
+def test_clip_polygon_partial_clip():
+    """Тест частичного отсечения полигона"""
+    subject = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
+    # Отсечение по диагональной линии
+    A = np.array([0, 5], dtype=np.float64)
+    B = np.array([10, 5], dtype=np.float64)
+    
+    clipped, count = clip_polygon(subject, A, B)
+    
+    # Должен получиться новый полигон
+    assert count > 0
+    assert count <= 20  # Максимальный размер буфера
+
+
+def test_compute_intersection_edge_case():
+    """Тест compute_intersection для граничного случая"""
+    p1 = np.array([0, 0], dtype=np.float64)
+    p2 = np.array([10, 10], dtype=np.float64)
+    A = np.array([0, 10], dtype=np.float64)
+    B = np.array([10, 0], dtype=np.float64)
+    
+    inter = compute_intersection(p1, p2, A, B)
+    
+    # Должна быть точка пересечения в середине
+    assert inter[0] > 0 and inter[0] < 10
+    assert inter[1] > 0 and inter[1] < 10
+
+
+def test_locality_aware_nms_far_apart_boxes():
+    """Тест locality_aware_nms с далеко расположенными боксами"""
+    boxes = np.array(
+        [
+            [0, 0, 10, 0, 10, 10, 0, 10, 0.9],
+            [1000, 1000, 1010, 1000, 1010, 1010, 1000, 1010, 0.8],
+        ],
+        dtype=np.float32,
+    )
+    
+    result = locality_aware_nms(boxes, iou_threshold=0.5)
+    
+    # Оба должны остаться (не пересекаются)
+    assert result.shape[0] == 2
+
+
+def test_locality_aware_nms_different_thresholds():
+    """Тест locality_aware_nms с разными порогами"""
+    boxes = np.array(
+        [
+            [0, 0, 10, 0, 10, 10, 0, 10, 0.9],
+            [2, 2, 12, 2, 12, 12, 2, 12, 0.8],
+            [4, 4, 14, 4, 14, 14, 4, 14, 0.7],
+        ],
+        dtype=np.float32,
+    )
+    
+    # Низкий порог - больше объединений
+    result_low = locality_aware_nms(boxes, iou_threshold=0.01)
+    
+    # Высокий порог - меньше объединений
+    result_high = locality_aware_nms(boxes, iou_threshold=0.99)
+    
+    # С высоким порогом должно остаться больше боксов
+    assert result_high.shape[0] >= result_low.shape[0]
