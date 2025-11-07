@@ -154,6 +154,10 @@ class TRBA:
         self.img_w = config.get("img_w", 256)
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
         self.cnn_out_channels = config.get("cnn_out_channels", 512)
+        
+        # CTC parameters
+        self.use_ctc_auxiliary = config.get("use_ctc_auxiliary", False)
+        self.ctc_weight = config.get("ctc_weight", 0.3)
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -262,14 +266,17 @@ class TRBA:
             eos_id=self.eos_id,
             pad_id=self.pad_id,
             blank_id=self.blank_id,
+            use_ctc_auxiliary=self.use_ctc_auxiliary,
+            ctc_weight=self.ctc_weight,
         ).to(self.device)
 
         load_checkpoint(
             path=self.model_path,
             model=model,
             map_location=self.device,
+            strict=False,  # Allow missing keys if CTC head not in checkpoint
         )
-
+        
         model.eval()
         return model
 
@@ -305,7 +312,7 @@ class TRBA:
             np.ndarray, str, Image.Image, List[Union[np.ndarray, str, Image.Image]]
         ],
         batch_size: int = 32,
-        mode: str = "beam",
+        mode: str = "greedy",
         beam_size: int = 8,
         temperature: float = 1.7,
         alpha: float = 0.9,

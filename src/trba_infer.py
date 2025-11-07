@@ -1,14 +1,14 @@
 import time
 from manuscript.recognizers import TRBA
 
+
 # === Инициализация модели ===
-recognizer = TRBA(model_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_4_model_32\best_acc_weights.pth", 
-config_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_4_model_32\config.json",
-                device = 'cpu')
+recognizer = TRBA(model_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\best_acc_weights.pth", 
+config_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\config.json")
 
 # === Список изображений ===
 images = [
-    r"C:\Users\USER\Desktop\t2.png",
+    r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\img\images_group_7_1261_4240.png",
 ]*16
 
 # === Измеряем время ===
