@@ -77,9 +77,10 @@ def _run_training(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=0,  # Windows может зависать с multiprocessing
         collate_fn=_custom_collate_fn,
         pin_memory=True,
+        persistent_workers=False,
     )
 
     if val_datasets:
@@ -316,6 +317,10 @@ def _run_training(
 
         avg_train = train_loss / len(train_loader)
         writer.add_scalar("Loss/Train", avg_train, epoch)
+        
+        # Очистка GPU кеша между эпохами
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         do_validate = (epoch % val_interval) == 0
         should_stop = False
@@ -408,6 +413,10 @@ def _run_training(
                     should_stop = True
 
             make_collage(f"epoch{epoch}", epoch)
+            
+            # Очистка GPU памяти после валидации
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
         # Save checkpoints and state
         torch.save(

@@ -18,10 +18,17 @@ datasets = [
         "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\img",
         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\labels.csv",
     },
-    # Раскомментируйте для добавления второго датасета:
     {
         "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\img",
          "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\labels.csv",
+    },
+    {
+        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\img",
+        "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\labels.csv",
+    },
+    {
+        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\train\img",
+         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\train\labels.csv",
     },
 ]
 
@@ -370,49 +377,59 @@ if error_details:
         print(f"      Pred: '{ex['hyp']}'")
         print(f"      CER: {ex['cer']:.3f}, Conf: {ex['confidence']:.3f}")
 
-    # 5. Топ-100 худших примеров по CER с HTML-отчетом (со встроенными изображениями)
-    print(f"\n5️⃣ ТОП-100 ХУДШИХ ПРИМЕРОВ (по CER) — HTML ОТЧЁТ (встроенные изображения)")
+    # === 5. ВСЕ ОШИБКИ (разбитые на 4 HTML, отсортированы по GT) ===
+    print(f"\n5️⃣ СОЗДАЁМ HTML-ОТЧЁТЫ СО ВСЕМИ ОШИБКАМИ (разбитые на 4 части, сортировка по GT)...")
 
     import base64
     from io import BytesIO
     from PIL import Image
+    import math
 
-    top_n = 1000
-    worst_examples = sorted(error_details, key=lambda x: x['cer'], reverse=True)[:top_n]
+    # === 1. Берём все ошибки, сортируем по GT ===
+    all_errors = sorted(error_details, key=lambda x: x['ref'].lower())
+    num_errors = len(all_errors)
+    num_parts = 4
+    part_size = math.ceil(num_errors / num_parts)
 
-    html_path = os.path.join(os.path.dirname(model_path), "ocr_top_100_errors_embedded.html")
+    print(f"   Всего ошибок: {num_errors}")
+    print(f"   Будет создано {num_parts} HTML-файла по ~{part_size} записей каждый")
 
-    html = [
-        "<html><head><meta charset='utf-8'>",
-        "<style>",
-        "body { font-family: Arial, sans-serif; background: #fafafa; }",
-        "table { border-collapse: collapse; width: 100%; margin: 20px 0; table-layout: fixed; }",
-        "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: middle; overflow-wrap: break-word; }",
-        "th { background-color: #f2f2f2; }",
-        "td:nth-child(2) { width: 150px; text-align: center; }",
-        "img { max-width: 140px; max-height: 80px; object-fit: contain; border-radius: 6px; background: #fff; }",
-        ".gt { color: #006400; font-weight: bold; }",
-        ".pred { color: #8B0000; font-weight: bold; }",
-        ".num { text-align: center; }",
-        "button { margin: 10px; padding: 6px 10px; }",
-        "</style></head><body>",
-        f"<h2>📊 Топ-{top_n} худших ошибок OCR (по CER)</h2>",
-        "<button onclick='resizeImages(0.5)'>🔍 Уменьшить</button>",
-        "<button onclick='resizeImages(1)'>🔎 Нормально</button>",
-        "<button onclick='resizeImages(2)'>🔍 Увеличить</button>",
-        "<script>",
-        "function resizeImages(scale){",
-        "  document.querySelectorAll('img').forEach(img=>{",
-        "    img.style.maxWidth = (140*scale)+'px';",
-        "    img.style.maxHeight = (80*scale)+'px';",
-        "  });",
-        "}",
-        "</script>",
-        "<table>",
-        "<tr><th>#</th><th>Изображение</th><th>Файл</th><th>GT</th><th>Pred</th><th>CER</th><th>Conf.</th></tr>"
-    ]
+    # === 2. Общий стиль и JS (единые для всех частей) ===
+    def make_html_header(title):
+        return [
+            "<html><head><meta charset='utf-8'>",
+            "<style>",
+            "body { font-family: Arial, sans-serif; background: #fafafa; }",
+            "table { border-collapse: collapse; width: 100%; margin: 20px 0; table-layout: fixed; }",
+            "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: middle; overflow-wrap: break-word; }",
+            "th { background-color: #f2f2f2; }",
+            "td:nth-child(2) { width: 150px; text-align: center; }",
+            "img { max-width: 140px; max-height: 80px; object-fit: contain; border-radius: 6px; background: #fff; }",
+            ".gt { color: #006400; font-weight: bold; }",
+            ".pred { color: #8B0000; font-weight: bold; }",
+            ".edit { background: #ffffe0; }",
+            ".num { text-align: center; }",
+            "button { margin: 10px; padding: 6px 10px; }",
+            "</style></head><body>",
+            f"<h2>{title}</h2>",
+            "<div>",
+            "<button onclick='resizeImages(0.5)'>🔍 Уменьшить</button>",
+            "<button onclick='resizeImages(1)'>🔎 Нормально</button>",
+            "<button onclick='resizeImages(2)'>🔍 Увеличить</button>",
+            "<button onclick='downloadCorrections()'>💾 Скачать правки (CSV)</button>",
+            "</div>",
+            "<script>",
+            "function resizeImages(scale){document.querySelectorAll('img').forEach(img=>{img.style.maxWidth=(140*scale)+'px';img.style.maxHeight=(80*scale)+'px';});}",
+            "function saveCorrection(id){const val=document.getElementById('edit_'+id).innerText.trim();localStorage.setItem('ocr_edit_'+id,val);}",
+            "function loadCorrections(){document.querySelectorAll('[id^=edit_]').forEach(el=>{const saved=localStorage.getItem('ocr_edit_'+el.id.split('edit_')[1]);if(saved){el.innerText=saved;}});}",
+            "function downloadCorrections(){let rows=[['#','filename','GT','Pred','CER','Conf','Correction']];document.querySelectorAll('tr[data-id]').forEach(tr=>{const id=tr.getAttribute('data-id');const cells=tr.querySelectorAll('td');const correction=document.getElementById('edit_'+id).innerText.trim().replace(/\\n/g,' ');rows.push([id,cells[2].innerText,cells[3].innerText,cells[4].innerText,cells[5].innerText,cells[6].innerText,correction]);});const csvContent=rows.map(r=>r.map(v=>'\"'+v.replaceAll('\"','\"\"')+'\"').join(',')).join('\\n');const blob=new Blob([csvContent],{type:'text/csv;charset=utf-8;'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ocr_corrections.csv';a.click();}",
+            "window.onload=loadCorrections;",
+            "</script>",
+            "<table>",
+            "<tr><th>#</th><th>Изображение</th><th>Файл</th><th>GT</th><th>Pred</th><th>CER</th><th>Conf.</th><th>Правка ✏️</th></tr>"
+        ]
 
-    for i, ex in enumerate(worst_examples, 1):
+    def make_html_row(i, ex):
         fname = ex['fname']
         cer = f"{ex['cer']:.3f}"
         conf = f"{ex['confidence']:.3f}"
@@ -431,18 +448,18 @@ if error_details:
         if img_path:
             try:
                 with Image.open(img_path) as img:
-                    img.thumbnail((400, 200))  # уменьшаем для компактности
+                    img.thumbnail((400, 200))
                     buffer = BytesIO()
                     img.save(buffer, format="JPEG", quality=80)
                     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
                     img_tag = f"<img src='data:image/jpeg;base64,{img_base64}'>"
-            except Exception as e:
+            except Exception:
                 img_tag = f"<div style='color:red;'>Ошибка загрузки</div>"
         else:
             img_tag = "<div style='color:gray;'>Нет изображения</div>"
 
-        html.append(
-            f"<tr>"
+        return (
+            f"<tr data-id='{i}'>"
             f"<td class='num'>{i}</td>"
             f"<td>{img_tag}</td>"
             f"<td>{fname}</td>"
@@ -450,15 +467,36 @@ if error_details:
             f"<td class='pred'>{pred}</td>"
             f"<td class='num'>{cer}</td>"
             f"<td class='num'>{conf}</td>"
+            f"<td class='edit' id='edit_{i}' contenteditable='true' oninput='saveCorrection({i})'></td>"
             f"</tr>"
         )
 
-    html.append("</table></body></html>")
+    # === 3. Генерация 4 HTML-файлов ===
+    for part_idx in range(num_parts):
+        start = part_idx * part_size
+        end = min(start + part_size, num_errors)
+        subset = all_errors[start:end]
 
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(html))
+        if not subset:
+            continue
 
-    print(f"💾 HTML-отчёт со встроенными изображениями сохранён: {html_path}")
+        html_lines = make_html_header(f"📊 OCR ошибки (часть {part_idx+1} из {num_parts}) — записи {start+1}–{end}")
+        for i, ex in enumerate(subset, start + 1):
+            html_lines.append(make_html_row(i, ex))
+        html_lines.append("</table></body></html>")
+
+        html_path = os.path.join(
+            os.path.dirname(model_path),
+            f"ocr_all_errors_part{part_idx+1}.html"
+        )
+
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(html_lines))
+
+        print(f"💾 HTML-отчёт сохранён: {html_path}")
+
+    print(f"\n✅ Создано {num_parts} HTML-файлов со всеми {num_errors} ошибками (отсортировано по GT).")
+
 
     # 6. Связь уверенности и ошибок
     print(f"\n6️⃣ СВЯЗЬ УВЕРЕННОСТИ И ОШИБОК:")
