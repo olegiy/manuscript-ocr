@@ -6,6 +6,8 @@ from torchvision.models import (
     ResNet50_Weights,
     resnet101,
     ResNet101_Weights,
+    efficientnet_b5,
+    EfficientNet_B5_Weights,
 )
 from torchvision.models.feature_extraction import create_feature_extractor
 
@@ -38,47 +40,78 @@ class ResNetFeatureExtractor(nn.Module):
         freeze_first: bool = False,
     ):
         super().__init__()
-        # select model and weights
+
         if backbone_name == "resnet50":
             model = resnet50(weights=ResNet50_Weights.DEFAULT if pretrained else None)
-        elif backbone_name == "resnet101":
-            model = resnet101(weights=ResNet101_Weights.DEFAULT if pretrained else None)
-        else:
-            raise ValueError(f"Unsupported backbone: {backbone_name}")
-
-        # optional freezing of initial layers
-        if freeze_first:
-            for name, param in model.named_parameters():
-                if name.startswith(("conv1", "bn1", "layer1")):
-                    param.requires_grad = False
-
-        # extract feature maps at 4 stages
-        self.extractor = create_feature_extractor(
-            model,
-            return_nodes={
+            return_nodes = {
                 "layer1": "res1",  # stride 4
                 "layer2": "res2",  # stride 8
                 "layer3": "res3",  # stride 16
                 "layer4": "res4",  # stride 32
-            },
-        )
+            }
+
+        elif backbone_name == "resnet101":
+            model = resnet101(weights=ResNet101_Weights.DEFAULT if pretrained else None)
+            return_nodes = {
+                "layer1": "res1",
+                "layer2": "res2",
+                "layer3": "res3",
+                "layer4": "res4",
+            }
+
+        elif backbone_name == "efficientnet_b5":
+            model = efficientnet_b5(
+                weights=EfficientNet_B5_Weights.DEFAULT if pretrained else None
+            )
+            # efficientnet_b5.features = [Conv2dNormActivation, MBConv, ..., Conv2dNormActivation]
+            # Примерная карта слоёв для stride [4, 8, 16, 32]:
+            return_nodes = {
+                "features.2": "res1",  # stride ≈ 4
+                "features.3": "res2",  # stride ≈ 8
+                "features.4": "res3",  # stride ≈ 16
+                "features.6": "res4",  # stride ≈ 32
+            }
+
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone_name}")
+
+        # --- опциональное замораживание первых слоёв ---
+        if freeze_first:
+            for name, param in model.named_parameters():
+                if any(k in name for k in ("conv_stem", "bn1", "features.0", "features.1")):
+                    param.requires_grad = False
+
+        self.extractor = create_feature_extractor(model, return_nodes=return_nodes)
 
     def forward(self, x):
         return self.extractor(x)
 
 
 class FeatureMergingBranchResNet(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels_list=(256, 512, 1024, 2048)):
+        """
+        Feature merging decoder for EAST.
+        
+        Parameters
+        ----------
+        in_channels_list : tuple of int
+            Number of channels for (res1, res2, res3, res4) features.
+            Default is for ResNet: (256, 512, 1024, 2048)
+            For EfficientNet-B5 use: (40, 64, 128, 304)
+        """
         super().__init__()
-        self.block1 = DecoderBlock(in_channels=2048, mid_channels=512, out_channels=512)
+        c1, c2, c3, c4 = in_channels_list
+        
+        # Decoder blocks - уменьшаем каналы постепенно
+        self.block1 = DecoderBlock(in_channels=c4, mid_channels=512, out_channels=512)
         self.block2 = DecoderBlock(
-            in_channels=512 + 1024, mid_channels=256, out_channels=256
+            in_channels=512 + c3, mid_channels=256, out_channels=256
         )
         self.block3 = DecoderBlock(
-            in_channels=256 + 512, mid_channels=128, out_channels=128
+            in_channels=256 + c2, mid_channels=128, out_channels=128
         )
         self.block4 = DecoderBlock(
-            in_channels=128 + 256, mid_channels=64, out_channels=32
+            in_channels=128 + c1, mid_channels=64, out_channels=32
         )
 
     def forward(self, feats):
@@ -120,7 +153,16 @@ class EAST(nn.Module):
             pretrained=pretrained_backbone,
             freeze_first=freeze_first,
         )
-        self.decoder = FeatureMergingBranchResNet()
+        
+        # Определяем размеры каналов в зависимости от backbone
+        if backbone_name == "resnet50" or backbone_name == "resnet101":
+            in_channels_list = (256, 512, 1024, 2048)
+        elif backbone_name == "efficientnet_b5":
+            in_channels_list = (40, 64, 128, 304)
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone_name}")
+        
+        self.decoder = FeatureMergingBranchResNet(in_channels_list=in_channels_list)
         self.output_head = OutputHead()
         # scales for maps (legacy behavior)
         self.score_scale = 0.25

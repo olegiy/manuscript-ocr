@@ -429,12 +429,14 @@ class EAST:
         *,
         experiment_root: str = "./experiments",
         model_name: str = "resnet_quad",
+        backbone_name: str = "resnet50",
         pretrained_backbone: bool = True,
         freeze_first: bool = True,
         target_size: int = 1024,
         score_geo_scale: Optional[float] = None,
         epochs: int = 500,
         batch_size: int = 3,
+        accumulation_steps: int = 1,
         lr: float = 1e-3,
         grad_clip: float = 5.0,
         early_stop: int = 100,
@@ -472,6 +474,14 @@ class EAST:
         model_name : str, optional
             Folder name inside ``experiment_root`` for logs and checkpoints.
             Default is ``"resnet_quad"``.
+        backbone_name : {"resnet50", "resnet101", "efficientnet_b5"}, optional
+            Backbone architecture to use. Options:
+            
+            - ``"resnet50"`` — ResNet-50 (faster, less parameters)
+            - ``"resnet101"`` — ResNet-101 (slower, more capacity)
+            - ``"efficientnet_b5"`` — EfficientNet-B5 (efficient, modern)
+            
+            Default is ``"resnet50"``.
         pretrained_backbone : bool, optional
             Use ImageNet-pretrained backbone weights. Default ``True``.
         freeze_first : bool, optional
@@ -484,7 +494,16 @@ class EAST:
         epochs : int, optional
             Number of training epochs. Default ``500``.
         batch_size : int, optional
-            Batch size. Default ``3``.
+            Batch size per GPU. Default ``3``.
+        accumulation_steps : int, optional
+            Number of gradient accumulation steps. Effective batch size will be
+            ``batch_size * accumulation_steps``. Use this to train with larger
+            effective batch sizes when GPU memory is limited. For example:
+            
+            - ``batch_size=2, accumulation_steps=4`` → effective batch size = 8
+            - ``batch_size=1, accumulation_steps=8`` → effective batch size = 8
+            
+            Default is ``1`` (no accumulation).
         lr : float, optional
             Learning rate. Default ``1e-3``.
         grad_clip : float, optional
@@ -554,6 +573,7 @@ class EAST:
         ...     train_anns=train_anns,
         ...     val_images=val_images,
         ...     val_anns=val_anns,
+        ...     backbone_name="efficientnet_b5",
         ...     target_size=256,
         ...     epochs=20,
         ...     batch_size=4,
@@ -568,7 +588,7 @@ class EAST:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         model = EASTModel(
-            backbone_name="resnet101",
+            backbone_name=backbone_name,
             pretrained_backbone=pretrained_backbone,
             freeze_first=freeze_first,
         ).to(device)
@@ -711,6 +731,7 @@ class EAST:
             device=device,
             num_epochs=epochs,
             batch_size=batch_size,
+            accumulation_steps=accumulation_steps,
             lr=lr,
             grad_clip=grad_clip,
             early_stop=early_stop,
@@ -737,6 +758,7 @@ class EAST:
     def export_to_onnx(
         weights_path: Union[str, Path],
         output_path: Union[str, Path],
+        backbone_name: str = "resnet50",
         input_size: int = 1280,
         opset_version: int = 14,
         simplify: bool = True,
@@ -754,6 +776,9 @@ class EAST:
             Path to the PyTorch model weights file (.pth).
         output_path : str or Path
             Path where the ONNX model will be saved (.onnx).
+        backbone_name : {"resnet50", "resnet101", "efficientnet_b5"}, optional
+            Backbone architecture of the model. Must match the architecture
+            used during training. Default is ``"resnet50"``.
         input_size : int, optional
             Input image size (height and width). The model will accept
             images of shape ``(batch, 3, input_size, input_size)``.
@@ -838,6 +863,7 @@ class EAST:
 
         print(f"Loading PyTorch model from {weights_path}...")
         east_model = EASTModel(
+            backbone_name=backbone_name,
             pretrained_backbone=False,
             pretrained_model_path=str(weights_path),
         )

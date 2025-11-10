@@ -35,6 +35,7 @@ def _run_training(
     device: torch.device,
     num_epochs: int,
     batch_size: int,
+    accumulation_steps: int,
     lr: float,
     grad_clip: float,
     early_stop: int,
@@ -239,7 +240,9 @@ def _run_training(
     for epoch in range(start_epoch, num_epochs + 1):
         model.train()
         train_loss = 0.0
-        for imgs, tgt in tqdm(train_loader, desc=f"Train {epoch}"):
+        optimizer.zero_grad()  # Zero grad once at start of epoch
+        
+        for batch_idx, (imgs, tgt) in enumerate(tqdm(train_loader, desc=f"Train {epoch}"), 1):
             imgs = imgs.to(device)
             gt_s = tgt["score_map"].to(device)
             gt_g = tgt["geo_map"].to(device)
@@ -256,7 +259,6 @@ def _run_training(
             else:
                 imgs_in = imgs
 
-            optimizer.zero_grad()
             if use_sam:
 
                 def closure():
@@ -273,9 +275,10 @@ def _run_training(
                         mode="bilinear",
                         align_corners=False,
                     )
-                    return criterion(gt_s, ps, gt_g, pg)
+                    loss = criterion(gt_s, ps, gt_g, pg)
+                    return loss / accumulation_steps  # Scale loss for accumulation
 
-                loss = optimizer.step(closure)
+                loss = optimizer.step(closure) * accumulation_steps  # Unscale for logging
             else:
                 with autocast_ctx():
                     out = model(imgs_in)
@@ -292,11 +295,21 @@ def _run_training(
                         align_corners=False,
                     )
                     loss = criterion(gt_s, ps, gt_g, pg)
+                    # Scale loss for gradient accumulation
+                    loss = loss / accumulation_steps
+                
                 scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                scaler.step(optimizer)
-                scaler.update()
+                
+                # Only step optimizer every accumulation_steps
+                if batch_idx % accumulation_steps == 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+                
+                # Unscale loss for logging
+                loss = loss * accumulation_steps
 
             scheduler.step(epoch + imgs.size(0) / len(train_loader))
             train_loss += loss.item()

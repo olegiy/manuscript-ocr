@@ -369,7 +369,97 @@ if error_details:
         print(f"      GT:   '{ex['ref']}'")
         print(f"      Pred: '{ex['hyp']}'")
         print(f"      CER: {ex['cer']:.3f}, Conf: {ex['confidence']:.3f}")
-    
+
+    # 5. Топ-100 худших примеров по CER с HTML-отчетом (со встроенными изображениями)
+    print(f"\n5️⃣ ТОП-100 ХУДШИХ ПРИМЕРОВ (по CER) — HTML ОТЧЁТ (встроенные изображения)")
+
+    import base64
+    from io import BytesIO
+    from PIL import Image
+
+    top_n = 1000
+    worst_examples = sorted(error_details, key=lambda x: x['cer'], reverse=True)[:top_n]
+
+    html_path = os.path.join(os.path.dirname(model_path), "ocr_top_100_errors_embedded.html")
+
+    html = [
+        "<html><head><meta charset='utf-8'>",
+        "<style>",
+        "body { font-family: Arial, sans-serif; background: #fafafa; }",
+        "table { border-collapse: collapse; width: 100%; margin: 20px 0; table-layout: fixed; }",
+        "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: middle; overflow-wrap: break-word; }",
+        "th { background-color: #f2f2f2; }",
+        "td:nth-child(2) { width: 150px; text-align: center; }",
+        "img { max-width: 140px; max-height: 80px; object-fit: contain; border-radius: 6px; background: #fff; }",
+        ".gt { color: #006400; font-weight: bold; }",
+        ".pred { color: #8B0000; font-weight: bold; }",
+        ".num { text-align: center; }",
+        "button { margin: 10px; padding: 6px 10px; }",
+        "</style></head><body>",
+        f"<h2>📊 Топ-{top_n} худших ошибок OCR (по CER)</h2>",
+        "<button onclick='resizeImages(0.5)'>🔍 Уменьшить</button>",
+        "<button onclick='resizeImages(1)'>🔎 Нормально</button>",
+        "<button onclick='resizeImages(2)'>🔍 Увеличить</button>",
+        "<script>",
+        "function resizeImages(scale){",
+        "  document.querySelectorAll('img').forEach(img=>{",
+        "    img.style.maxWidth = (140*scale)+'px';",
+        "    img.style.maxHeight = (80*scale)+'px';",
+        "  });",
+        "}",
+        "</script>",
+        "<table>",
+        "<tr><th>#</th><th>Изображение</th><th>Файл</th><th>GT</th><th>Pred</th><th>CER</th><th>Conf.</th></tr>"
+    ]
+
+    for i, ex in enumerate(worst_examples, 1):
+        fname = ex['fname']
+        cer = f"{ex['cer']:.3f}"
+        conf = f"{ex['confidence']:.3f}"
+        gt = ex['ref'].replace("<", "&lt;").replace(">", "&gt;")
+        pred = ex['hyp'].replace("<", "&lt;").replace(">", "&gt;")
+
+        # Находим путь к изображению
+        img_path = None
+        for d in datasets:
+            candidate = os.path.join(d["image_dir"], fname)
+            if os.path.exists(candidate):
+                img_path = candidate
+                break
+
+        # Конвертируем в base64
+        if img_path:
+            try:
+                with Image.open(img_path) as img:
+                    img.thumbnail((400, 200))  # уменьшаем для компактности
+                    buffer = BytesIO()
+                    img.save(buffer, format="JPEG", quality=80)
+                    img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    img_tag = f"<img src='data:image/jpeg;base64,{img_base64}'>"
+            except Exception as e:
+                img_tag = f"<div style='color:red;'>Ошибка загрузки</div>"
+        else:
+            img_tag = "<div style='color:gray;'>Нет изображения</div>"
+
+        html.append(
+            f"<tr>"
+            f"<td class='num'>{i}</td>"
+            f"<td>{img_tag}</td>"
+            f"<td>{fname}</td>"
+            f"<td class='gt'>{gt}</td>"
+            f"<td class='pred'>{pred}</td>"
+            f"<td class='num'>{cer}</td>"
+            f"<td class='num'>{conf}</td>"
+            f"</tr>"
+        )
+
+    html.append("</table></body></html>")
+
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(html))
+
+    print(f"💾 HTML-отчёт со встроенными изображениями сохранён: {html_path}")
+
     # 6. Связь уверенности и ошибок
     print(f"\n6️⃣ СВЯЗЬ УВЕРЕННОСТИ И ОШИБОК:")
     low_conf_errors = [e for e in error_details if e['confidence'] < 0.8]
