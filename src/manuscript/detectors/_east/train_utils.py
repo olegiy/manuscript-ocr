@@ -1,5 +1,6 @@
 import os
 import random
+import json
 from collections import OrderedDict
 from typing import Optional, Sequence
 
@@ -14,6 +15,7 @@ from tqdm.auto import tqdm
 from .loss import EASTLoss
 from .sam import SAMSolver
 from .utils import create_collage, decode_quads_from_maps
+from .lanms import locality_aware_nms
 
 
 def _dice_coefficient(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6):
@@ -50,6 +52,9 @@ def _run_training(
     focal_gamma: float,
     val_interval: int = 1,
     *,
+    backbone_name: Optional[str] = None,
+    target_size: Optional[int] = None,
+    pretrained_backbone: Optional[bool] = None,
     val_datasets: Optional[Sequence[torch.utils.data.Dataset]] = None,
     val_dataset_names: Optional[Sequence[str]] = None,
     resume: bool = False,
@@ -64,6 +69,39 @@ def _run_training(
     ckpt_dir = os.path.join(experiment_dir, "checkpoints")
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(ckpt_dir, exist_ok=True)
+
+    # Save training configuration
+    config = {
+        "backbone_name": backbone_name,
+        "pretrained_backbone": pretrained_backbone,
+        "target_size": target_size,
+        "num_epochs": num_epochs,
+        "batch_size": batch_size,
+        "accumulation_steps": accumulation_steps,
+        "effective_batch_size": batch_size * accumulation_steps,
+        "lr": lr,
+        "grad_clip": grad_clip,
+        "early_stop": early_stop,
+        "use_sam": use_sam,
+        "sam_type": sam_type if use_sam else None,
+        "use_lookahead": use_lookahead,
+        "use_ema": use_ema,
+        "use_multiscale": use_multiscale,
+        "use_ohem": use_ohem,
+        "ohem_ratio": ohem_ratio if use_ohem else None,
+        "use_focal_geo": use_focal_geo,
+        "focal_gamma": focal_gamma if use_focal_geo else None,
+        "val_interval": val_interval,
+        "scheduler": "CosineAnnealingLR",
+        "optimizer": "SAM" if use_sam else ("Lookahead(RAdam)" if use_lookahead else "RAdam"),
+        "train_dataset_size": len(train_dataset),
+        "val_dataset_size": len(val_dataset),
+    }
+    
+    config_path = os.path.join(experiment_dir, "training_config.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    print(f"Training configuration saved to: {config_path}")
 
     start_epoch = 1
     best_val_loss = float("inf")
@@ -147,10 +185,10 @@ def _run_training(
         if not hasattr(optimizer, attr):
             setattr(optimizer, attr, OrderedDict())
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    # Плавное снижение learning rate с cosine annealing (без перезапусков)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_0=10,
-        T_mult=1,
+        T_max=num_epochs,
         eta_min=lr / 100,
     )
     try:
@@ -174,6 +212,7 @@ def _run_training(
 
     # EMA model copy
     ema_model = model if not use_ema else torch.deepcopy(model)
+    ema_decay = 0.9999  # EMA decay rate
     if use_ema:
         for p in ema_model.parameters():
             p.requires_grad = False
@@ -206,7 +245,7 @@ def _run_training(
     def _sanitize_tag(name: str) -> str:
         return name.replace("\\", "_").replace("/", "_").replace(" ", "_")
 
-    collage_cell_size = 960
+    collage_cell_size = 480  # Уменьшено с 960 до 480 (в 2 раза)
     collage_samples = 4
 
     def make_collage(tag: str, epoch: int):
@@ -242,6 +281,9 @@ def _run_training(
         model.train()
         train_loss = 0.0
         optimizer.zero_grad()  # Zero grad once at start of epoch
+        
+        # Вычисляем global_step для логирования каждого батча
+        global_step = (epoch - 1) * len(train_loader)
         
         for batch_idx, (imgs, tgt) in enumerate(tqdm(train_loader, desc=f"Train {epoch}"), 1):
             imgs = imgs.to(device)
@@ -314,6 +356,16 @@ def _run_training(
 
             scheduler.step(epoch + imgs.size(0) / len(train_loader))
             train_loss += loss.item()
+            
+            # Логируем каждый батч
+            current_step = global_step + batch_idx
+            writer.add_scalar("Loss/Train_Step", loss.item(), current_step)
+            
+            # Update EMA model weights
+            if use_ema:
+                with torch.no_grad():
+                    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+                        ema_param.data.mul_(ema_decay).add_(param.data, alpha=1 - ema_decay)
 
         avg_train = train_loss / len(train_loader)
         writer.add_scalar("Loss/Train", avg_train, epoch)
@@ -464,9 +516,18 @@ def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
         ps = out["score"][0].cpu().numpy().squeeze(0)
         pg = out["geometry"][0].cpu().numpy().transpose(1, 2, 0)
 
+        # Decode quads from maps
         pred_r = decode_quads_from_maps(
-            ps, pg, score_thresh=0.9, scale=1 / model.score_scale, quantization=1
+            ps, pg, score_thresh=0.7, scale=1 / model.score_scale, quantization=1
         )
+        
+        # Apply NMS exactly like in real inference
+        if len(pred_r) > 0:
+            pred_r = locality_aware_nms(
+                pred_r.astype(np.float32), 
+                iou_threshold=0.2,
+                iou_threshold_standard=0.05
+            )
 
         coll = create_collage(
             img_tensor=img_t,

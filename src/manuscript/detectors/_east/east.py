@@ -8,6 +8,8 @@ from torchvision.models import (
     ResNet101_Weights,
     efficientnet_b5,
     EfficientNet_B5_Weights,
+    convnext_small,
+    ConvNeXt_Small_Weights,
 )
 from torchvision.models.feature_extraction import create_feature_extractor
 
@@ -63,13 +65,27 @@ class ResNetFeatureExtractor(nn.Module):
             model = efficientnet_b5(
                 weights=EfficientNet_B5_Weights.DEFAULT if pretrained else None
             )
-            # efficientnet_b5.features = [Conv2dNormActivation, MBConv, ..., Conv2dNormActivation]
-            # Примерная карта слоёв для stride [4, 8, 16, 32]:
+            # EfficientNet-B5 feature extraction
+            # Используем features.7 вместо features.6 для более глубоких признаков (512 vs 304 каналов)
+            # Это ближе к ResNet50 архитектуре где res4 имеет 2048 каналов
             return_nodes = {
-                "features.2": "res1",  # stride ≈ 4
-                "features.3": "res2",  # stride ≈ 8
-                "features.4": "res3",  # stride ≈ 16
-                "features.6": "res4",  # stride ≈ 32
+                "features.2": "res1",  # 40 channels, stride=4
+                "features.3": "res2",  # 64 channels, stride=8
+                "features.4": "res3",  # 128 channels, stride=16
+                "features.7": "res4",  # 512 channels, stride=32 (было features.6 с 304 каналами)
+            }
+
+        elif backbone_name == "convnext_small":
+            model = convnext_small(
+                weights=ConvNeXt_Small_Weights.DEFAULT if pretrained else None
+            )
+            # ConvNeXt-Small feature extraction
+            # 4-stage architecture with progressive channel expansion
+            return_nodes = {
+                "features.1": "res1",  # 96 channels, stride=4
+                "features.3": "res2",  # 192 channels, stride=8
+                "features.5": "res3",  # 384 channels, stride=16
+                "features.7": "res4",  # 768 channels, stride=32
             }
 
         else:
@@ -96,8 +112,10 @@ class FeatureMergingBranchResNet(nn.Module):
         ----------
         in_channels_list : tuple of int
             Number of channels for (res1, res2, res3, res4) features.
-            Default is for ResNet: (256, 512, 1024, 2048)
-            For EfficientNet-B5 use: (40, 64, 128, 304)
+            
+            - ResNet-50/101: (256, 512, 1024, 2048)
+            - EfficientNet-B5: (40, 64, 128, 512)
+            - ConvNeXt-Small: (96, 192, 384, 768)
         """
         super().__init__()
         c1, c2, c3, c4 = in_channels_list
@@ -158,7 +176,11 @@ class EAST(nn.Module):
         if backbone_name == "resnet50" or backbone_name == "resnet101":
             in_channels_list = (256, 512, 1024, 2048)
         elif backbone_name == "efficientnet_b5":
-            in_channels_list = (40, 64, 128, 304)
+            # Обновлено: используем features.7 (512 каналов) вместо features.6 (304)
+            in_channels_list = (40, 64, 128, 512)
+        elif backbone_name == "convnext_small":
+            # ConvNeXt-Small channels: balanced architecture
+            in_channels_list = (96, 192, 384, 768)
         else:
             raise ValueError(f"Unsupported backbone: {backbone_name}")
         

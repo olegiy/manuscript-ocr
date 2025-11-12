@@ -474,12 +474,13 @@ class EAST:
         model_name : str, optional
             Folder name inside ``experiment_root`` for logs and checkpoints.
             Default is ``"resnet_quad"``.
-        backbone_name : {"resnet50", "resnet101", "efficientnet_b5"}, optional
+        backbone_name : {"resnet50", "resnet101", "efficientnet_b5", "convnext_small"}, optional
             Backbone architecture to use. Options:
             
             - ``"resnet50"`` — ResNet-50 (faster, less parameters)
             - ``"resnet101"`` — ResNet-101 (slower, more capacity)
             - ``"efficientnet_b5"`` — EfficientNet-B5 (efficient, modern)
+            - ``"convnext_small"`` — ConvNeXt-Small (modern CNN, excellent accuracy)
             
             Default is ``"resnet50"``.
         pretrained_backbone : bool, optional
@@ -745,6 +746,9 @@ class EAST:
             use_focal_geo=use_focal_geo,
             focal_gamma=focal_gamma,
             val_interval=val_interval,
+            backbone_name=backbone_name,
+            target_size=target_size,
+            pretrained_backbone=pretrained_backbone,
             val_datasets=val_datasets,
             val_dataset_names=val_dataset_names,
             resume=resume_flag,
