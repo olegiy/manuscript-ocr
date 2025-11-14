@@ -574,7 +574,8 @@ class TRBAModel(nn.Module):
             ctc_loss
         """
         if not self.use_ctc_head:
-            return torch.tensor(0.0, device=ctc_logits.device)
+            # Return zero that's part of computational graph
+            return ctc_logits.sum() * 0.0
         
         # CTC expects [W, B, num_classes]
         ctc_logits = ctc_logits.permute(1, 0, 2)  # [W, B, num_classes]
@@ -582,15 +583,22 @@ class TRBAModel(nn.Module):
         B, W = ctc_logits.size(1), ctc_logits.size(0)
         input_lengths = torch.full((B,), W, dtype=torch.long, device=ctc_logits.device)
         
+        # Apply log_softmax before CTC loss
+        log_probs = ctc_logits.log_softmax(2)
+        
         try:
-            ctc_loss = self.ctc_loss_fn(
-                ctc_logits.log_softmax(2), 
+            ctc_loss = nn.functional.ctc_loss(
+                log_probs, 
                 targets, 
                 input_lengths, 
-                target_lengths
+                target_lengths,
+                blank=0,
+                reduction='mean',
+                zero_infinity=True
             )
-        except:
-            # Если CTC падает, возвращаем 0
-            ctc_loss = torch.tensor(0.0, device=ctc_logits.device)
+        except Exception as e:
+            # Если CTC падает, возвращаем 0 подключенный к графу
+            print(f"Warning: CTC loss failed: {e}")
+            ctc_loss = ctc_logits.sum() * 0.0
         
         return ctc_loss

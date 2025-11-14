@@ -448,10 +448,14 @@ def run_training(cfg: Config, device: str = "cuda"):
     train_proportions = getattr(cfg, "train_proportions", None)
     val_size = getattr(cfg, "val_size", 3000)
     num_workers = getattr(cfg, "num_workers", 0)
-    dual_validate = bool(getattr(cfg, "dual_validate", False))
-    beam_size = getattr(cfg, "beam_size", 8)
-    beam_alpha = getattr(cfg, "beam_alpha", 0.9)
-    beam_temperature = getattr(cfg, "beam_temperature", 1.7)
+    
+    # Decoder head selection: "ctc" | "attention" | "both"
+    decoder_head = getattr(cfg, "decoder_head", "attention")
+    if decoder_head not in ("ctc", "attention", "both"):
+        raise ValueError(f"decoder_head должен быть 'ctc', 'attention' или 'both', получен: {decoder_head}")
+    
+    # CTC loss weight (используется только при decoder_head="both")
+    ctc_weight = getattr(cfg, "ctc_weight", 0.3)
 
     # --- директории и TensorBoard ---
     if resume_path:
@@ -506,16 +510,9 @@ def run_training(cfg: Config, device: str = "cuda"):
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
     
-    # Decoder head selection: "ctc" | "attention" | "both"
-    decoder_head = getattr(cfg, "decoder_head", "attention")
-    if decoder_head not in ("ctc", "attention", "both"):
-        raise ValueError(f"decoder_head должен быть 'ctc', 'attention' или 'both', получен: {decoder_head}")
-    
+    # decoder_head и ctc_weight уже определены выше
     use_ctc_head = decoder_head in ("ctc", "both")
     use_attention_head = decoder_head in ("attention", "both")
-    
-    # CTC loss weight (используется только при decoder_head="both")
-    ctc_weight = getattr(cfg, "ctc_weight", 0.3)
 
     model = TRBAModel(
         num_classes=num_classes,
@@ -1157,7 +1154,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                                 hyps_single[mode_name].append(hyp)
 
                         pbar_val.set_postfix(val_loss=f"{float(val_loss.item()):.4f}")
-                        del imgs, text_in, target_y, logits_tf, preds_batch, tgt_ids
+                        del imgs, text_in, target_y, preds_batch, tgt_ids
 
                 avg_val_loss_single = total_val_loss_single / max(
                     1, len(val_loader_single)
@@ -1233,11 +1230,14 @@ def run_training(cfg: Config, device: str = "cuda"):
 
             # Визуализация случайных примеров в TensorBoard
             if val_loaders_individual:
+                # Выбираем случайный датасет для визуализации
+                random_val_loader = random.choice(val_loaders_individual)
+                
                 # Визуализация для основной головы
                 primary_mode = "attention" if use_attention_head else "ctc"
                 visualize_predictions_tensorboard(
                     model=model,
-                    val_loader=val_loaders_individual[0],
+                    val_loader=random_val_loader,
                     itos=itos,
                     pad_id=PAD,
                     eos_id=EOS,
@@ -1256,7 +1256,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     secondary_mode = "ctc" if primary_mode == "attention" else "attention"
                     visualize_predictions_tensorboard(
                         model=model,
-                        val_loader=val_loaders_individual[0],
+                        val_loader=random_val_loader,
                         itos=itos,
                         pad_id=PAD,
                         eos_id=EOS,
@@ -1304,7 +1304,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     "skipped",
                     "skipped",
                 ]
-                if dual_validate:
+                if val_acc_secondary is not None:
                     row.extend(["skipped", "skipped", "skipped"])
                 row.append(f"{optimizer.param_groups[0]['lr']:.6e}")
                 w.writerow(row)

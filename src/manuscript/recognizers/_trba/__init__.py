@@ -155,8 +155,10 @@ class TRBA:
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
         self.cnn_out_channels = config.get("cnn_out_channels", 512)
         
-        # CTC parameters
-        self.use_ctc_auxiliary = config.get("use_ctc_auxiliary", False)
+        # Decoder head configuration
+        self.decoder_head = config.get("decoder_head", "attention")
+        self.use_ctc_head = self.decoder_head in ("ctc", "both")
+        self.use_attention_head = self.decoder_head in ("attention", "both")
         self.ctc_weight = config.get("ctc_weight", 0.3)
 
         if device == "auto":
@@ -266,8 +268,8 @@ class TRBA:
             eos_id=self.eos_id,
             pad_id=self.pad_id,
             blank_id=self.blank_id,
-            use_ctc_auxiliary=self.use_ctc_auxiliary,
-            ctc_weight=self.ctc_weight,
+            use_ctc_head=self.use_ctc_head,
+            use_attention_head=self.use_attention_head,
         ).to(self.device)
 
         load_checkpoint(
@@ -312,10 +314,7 @@ class TRBA:
             np.ndarray, str, Image.Image, List[Union[np.ndarray, str, Image.Image]]
         ],
         batch_size: int = 32,
-        mode: str = "greedy",
-        beam_size: int = 8,
-        temperature: float = 1.7,
-        alpha: float = 0.9,
+        mode: str = "attention",
     ) -> List[Dict[str, Any]]:
         """
         Run text recognition on one or more word images.
@@ -332,24 +331,13 @@ class TRBA:
         batch_size : int, optional
             Number of images to process simultaneously. Larger batches are
             faster but require more memory. Default is 32.
-        mode : {"beam", "greedy"}, optional
-            Decoding strategy:
+        mode : {"attention", "ctc"}, optional
+            Decoding mode:
 
-            - ``"beam"`` — beam search decoding (slower, more accurate)
-            - ``"greedy"`` — greedy decoding (faster, less accurate)
+            - ``"attention"`` — Attention decoder (greedy, more accurate)
+            - ``"ctc"`` — CTC decoder (faster)
 
-            Default is ``"beam"``.
-        beam_size : int, optional
-            Beam width for beam search decoding. Only used when
-            ``mode="beam"``. Larger values explore more hypotheses but are
-            slower. Default is 8.
-        temperature : float, optional
-            Temperature for probability scaling in beam search. Higher values
-            increase diversity. Only used when ``mode="beam"``. Default is 1.7.
-        alpha : float, optional
-            Length penalty coefficient for beam search. Penalizes shorter
-            sequences when < 1.0, favors longer when > 1.0. Only used when
-            ``mode="beam"``. Default is 0.9.
+            Default is ``"attention"``.
 
         Returns
         -------
@@ -363,20 +351,20 @@ class TRBA:
 
         Examples
         --------
-        Recognize single image with beam search:
+        Recognize single image with Attention decoder:
 
         >>> from manuscript.recognizers import TRBA
         >>> recognizer = TRBA()
         >>> results = recognizer.predict("word_image.jpg")
         >>> print(f"Text: '{results[0]['text']}' (confidence: {results[0]['confidence']:.3f})")
 
-        Batch processing with greedy decoding:
+        Batch processing with CTC decoder (faster):
 
         >>> image_paths = ["word1.jpg", "word2.jpg", "word3.jpg"]
         >>> results = recognizer.predict(
         ...     image_paths,
         ...     batch_size=16,
-        ...     mode="greedy"
+        ...     mode="ctc"
         ... )
         >>> for img_path, result in zip(image_paths, results):
         ...     print(f"{img_path}: '{result['text']}' ({result['confidence']:.3f})")
@@ -407,29 +395,27 @@ class TRBA:
                     tensor = self._preprocess_image(img)
                     batch_tensors.append(tensor.squeeze(0))
                 batch_tensor = torch.stack(batch_tensors).to(self.device)
+                
                 # --- инференс ---
-                if mode == "greedy":
-                    probs, pred_ids = self.model(
-                        batch_tensor,
-                        is_train=False,
-                        batch_max_length=self.max_length,
-                        mode=mode,
-                    )
-                elif mode == "beam":
-                    probs, pred_ids = self.model(
-                        batch_tensor,
-                        is_train=False,
-                        batch_max_length=self.max_length,
-                        mode=mode,
-                        beam_size=beam_size,
-                        alpha=alpha,
-                        temperature=temperature,
-                    )
+                result = self.model(
+                    batch_tensor,
+                    is_train=False,
+                    batch_max_length=self.max_length,
+                    mode=mode,  # "attention" or "ctc"
+                )
+                
+                # Get predictions based on mode
+                if mode == "attention":
+                    logits = result["attention_logits"]
+                    pred_ids = result["attention_preds"]
+                elif mode == "ctc":
+                    logits = result["ctc_logits"]
+                    pred_ids = logits.argmax(dim=-1)  # [B, W] greedy decode
                 else:
-                    raise ValueError(f"Unknown mode: {mode}")
+                    raise ValueError(f"Unknown mode: {mode}. Use 'attention' or 'ctc'.")
 
                 # --- вычисление вероятностей ---
-                probs = F.log_softmax(probs, dim=-1)  # [B, T, V]
+                probs = F.log_softmax(logits, dim=-1)  # [B, T, V]
 
                 for j, pred_row in enumerate(pred_ids):
                     text = decode_tokens(
@@ -471,7 +457,7 @@ class TRBA:
         decoder_type: str = "LSTM",
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
-        use_ctc_auxiliary: bool = False,
+        decoder_head: str = "attention",
         ctc_weight: float = 0.3,
         batch_size: int = 32,
         epochs: int = 20,
@@ -487,10 +473,6 @@ class TRBA:
         seed: int = 42,
         resume_path: Optional[str] = None,
         save_every: Optional[int] = None,
-        dual_validate: bool = False,
-        beam_size: int = 8,
-        beam_alpha: float = 0.9,
-        beam_temperature: float = 1.7,
         device: str = "cuda",
         freeze_cnn: str = "none",
         freeze_enc_rnn: str = "none",
@@ -545,12 +527,18 @@ class TRBA:
             Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
         cnn_out_channels : int, optional
             Number of output channels from CNN backbone. Default is 512.
-        use_ctc_auxiliary : bool, optional
-            Use CTC loss as auxiliary supervision for encoder. Helps strengthen
-            encoder learning by providing direct guidance. Default is ``False``.
+        decoder_head : {"attention", "ctc", "both"}, optional
+            Which decoder head(s) to use during training:
+
+            - ``"attention"`` — only Attention decoder (accurate, greedy only)
+            - ``"ctc"`` — only CTC decoder (fast)
+            - ``"both"`` — dual training with both heads (recommended)
+
+            Default is ``"attention"``.
         ctc_weight : float, optional
-            Weight for CTC loss in combined loss: ``loss = attn_loss * (1 - ctc_weight) + ctc_loss * ctc_weight``.
-            Used only if ``use_ctc_auxiliary=True``. Default is 0.3.
+            Weight for CTC loss when ``decoder_head="both"``: 
+            ``loss = attn_loss * (1 - ctc_weight) + ctc_loss * ctc_weight``.
+            Default is 0.3.
         batch_size : int, optional
             Training batch size. Default is 32.
         epochs : int, optional
@@ -582,15 +570,6 @@ class TRBA:
         save_every : int, optional
             Save checkpoint every N epochs. If ``None``, only saves best model.
             Default is ``None``.
-        dual_validate : bool, optional
-            If ``True``, validates with both greedy and beam search decoding.
-            Default is ``False``.
-        beam_size : int, optional
-            Beam width for beam search validation. Default is 8.
-        beam_alpha : float, optional
-            Length penalty for beam search. Default is 0.9.
-        beam_temperature : float, optional
-            Temperature for beam search. Default is 1.7.
         device : {"cuda", "cpu"}, optional
             Training device. Default is ``"cuda"``.
         freeze_cnn : {"none", "all", "first", "last"}, optional
@@ -671,6 +650,16 @@ class TRBA:
         ...     epochs=20,
         ...     lr=1e-4,
         ... )
+
+        Train with dual heads (CTC + Attention):
+
+        >>> best_model = TRBA.train(
+        ...     train_csvs="data/train.csv",
+        ...     train_roots="data/train_images",
+        ...     decoder_head="both",
+        ...     ctc_weight=0.3,
+        ...     epochs=100,
+        ... )
         """
 
         def _ensure_path_list(
@@ -748,7 +737,7 @@ class TRBA:
             "decoder_type": decoder_type,
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
-            "use_ctc_auxiliary": use_ctc_auxiliary,
+            "decoder_head": decoder_head,
             "ctc_weight": ctc_weight,
             "batch_size": batch_size,
             "epochs": epochs,
@@ -761,10 +750,6 @@ class TRBA:
             "val_size": val_size,
             "num_workers": num_workers,
             "seed": seed,
-            "dual_validate": bool(dual_validate),
-            "beam_size": beam_size,
-            "beam_alpha": beam_alpha,
-            "beam_temperature": beam_temperature,
         }
 
         if exp_dir is not None:
