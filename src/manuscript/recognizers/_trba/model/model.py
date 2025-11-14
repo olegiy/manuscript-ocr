@@ -1,12 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from typing import Optional, Tuple, Dict, Any
 
 from .seresnet31 import SEResNet31
 
 
+# ============================================================================
+# Encoder Components
+# ============================================================================
+
 class BidirectionalLSTM(nn.Module):
+    """BiLSTM encoder layer - ONNX compatible."""
+    
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.rnn = nn.LSTM(
@@ -15,28 +21,34 @@ class BidirectionalLSTM(nn.Module):
         self.linear = nn.Linear(hidden_size * 2, output_size)
 
     def forward(self, x):
-        self.rnn.flatten_parameters()
         h, _ = self.rnn(x)  # [B, T, 2H]
         out = self.linear(h)  # [B, T, D]
         return out
 
 
 class BidirectionalGRU(nn.Module):
-    """Bidirectional GRU encoder layer (faster than LSTM, less memory)."""
-
+    """BiGRU encoder layer - ONNX compatible."""
+    
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
-        self.rnn = nn.GRU(input_size, hidden_size, bidirectional=True, batch_first=True)
+        self.rnn = nn.GRU(
+            input_size, hidden_size, bidirectional=True, batch_first=True
+        )
         self.linear = nn.Linear(hidden_size * 2, output_size)
 
     def forward(self, x):
-        self.rnn.flatten_parameters()
         h, _ = self.rnn(x)  # [B, T, 2H]
         out = self.linear(h)  # [B, T, D]
         return out
 
 
+# ============================================================================
+# Attention Decoder Components
+# ============================================================================
+
 class AttentionCell(nn.Module):
+    """Attention cell with LSTM - ONNX compatible."""
+    
     def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
         super().__init__()
         self.i2h = nn.Linear(input_size, hidden_size, bias=False)
@@ -47,7 +59,17 @@ class AttentionCell(nn.Module):
         self.dropout_p = dropout_p
 
     def forward(self, prev_hidden, batch_H, char_onehots):
-        # batch_H: [B, Tenc, C]
+        """
+        Args:
+            prev_hidden: (h, c) tuple for LSTM
+            batch_H: [B, Tenc, C] encoder output
+            char_onehots: [B, V] one-hot encoded character
+            
+        Returns:
+            cur_hidden: (h, c) tuple
+            alpha: [B, Tenc, 1] attention weights
+        """
+        # Attention mechanism
         proj_H = self.i2h(batch_H)  # [B, Tenc, H]
         proj_h = self.h2h(prev_hidden[0]).unsqueeze(1)
         e = self.score(torch.tanh(proj_H + proj_h))  # [B, Tenc, 1]
@@ -55,15 +77,20 @@ class AttentionCell(nn.Module):
         alpha = F.softmax(e, dim=1)  # [B, Tenc, 1]
         alpha = F.dropout(alpha, p=self.dropout_p, training=self.training)
 
+        # Context vector
         context = torch.bmm(alpha.transpose(1, 2), batch_H).squeeze(1)  # [B, C]
+        
+        # Concatenate context and character embedding
         x = torch.cat([context, char_onehots], 1)  # [B, C + V]
+        
+        # Decoder step
         cur_hidden = self.rnn(x, prev_hidden)  # (h, c)
         return cur_hidden, alpha
 
 
 class AttentionCellGRU(nn.Module):
-    """Attention cell with GRU decoder (faster, less memory than LSTM)."""
-
+    """Attention cell with GRU - ONNX compatible."""
+    
     def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
         super().__init__()
         self.i2h = nn.Linear(input_size, hidden_size, bias=False)
@@ -74,8 +101,17 @@ class AttentionCellGRU(nn.Module):
         self.dropout_p = dropout_p
 
     def forward(self, prev_hidden, batch_H, char_onehots):
-        # batch_H: [B, Tenc, C]
-        # prev_hidden: [B, H] for GRU (single hidden state)
+        """
+        Args:
+            prev_hidden: [B, H] hidden state for GRU
+            batch_H: [B, Tenc, C] encoder output
+            char_onehots: [B, V] one-hot encoded character
+            
+        Returns:
+            cur_hidden: [B, H] new hidden state
+            alpha: [B, Tenc, 1] attention weights
+        """
+        # Attention mechanism
         proj_H = self.i2h(batch_H)  # [B, Tenc, H]
         proj_h = self.h2h(prev_hidden).unsqueeze(1)
         e = self.score(torch.tanh(proj_H + proj_h))  # [B, Tenc, 1]
@@ -83,25 +119,30 @@ class AttentionCellGRU(nn.Module):
         alpha = F.softmax(e, dim=1)  # [B, Tenc, 1]
         alpha = F.dropout(alpha, p=self.dropout_p, training=self.training)
 
+        # Context vector
         context = torch.bmm(alpha.transpose(1, 2), batch_H).squeeze(1)  # [B, C]
+        
+        # Concatenate context and character embedding
         x = torch.cat([context, char_onehots], 1)  # [B, C + V]
+        
+        # Decoder step
         cur_hidden = self.rnn(x, prev_hidden)  # [B, H]
         return cur_hidden, alpha
 
 
-class Attention(nn.Module):
+class AttentionDecoder(nn.Module):
     def __init__(
         self,
-        input_size,
-        hidden_size,
-        num_classes,
+        input_size: int,
+        hidden_size: int,
+        num_classes: int,
         sos_id: int,
         eos_id: int,
         pad_id: int,
         blank_id: Optional[int] = None,
         dropout_p: float = 0.1,
         sampling_prob: float = 0.0,
-        decoder_type: str = "LSTM",  # "LSTM" or "GRU"
+        decoder_type: str = "LSTM",
     ):
         super().__init__()
 
@@ -118,9 +159,7 @@ class Attention(nn.Module):
             )
             self.is_lstm = False
         else:
-            raise ValueError(
-                f"Unknown decoder_type: {decoder_type}. Use 'LSTM' or 'GRU'"
-            )
+            raise ValueError(f"decoder_type должен быть 'LSTM' или 'GRU', получен: {decoder_type}")
 
         self.decoder_type = decoder_type
         self.hidden_size = hidden_size
@@ -135,13 +174,11 @@ class Attention(nn.Module):
         self.dropout_p = dropout_p
         self.sampling_prob = sampling_prob
 
-    def _char_to_onehot(self, input_char, device):
-        B = input_char.size(0)
-        one_hot = torch.zeros(B, self.num_classes, device=device)
-        one_hot.scatter_(1, input_char.unsqueeze(1), 1.0)
-        return one_hot
+    def _char_to_onehot(self, input_char: torch.Tensor) -> torch.Tensor:
+        return F.one_hot(input_char, num_classes=self.num_classes).float()
 
-    def _mask_logits(self, logits):
+    def _mask_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Маскирование blank токена если он есть."""
         if self.blank_id is not None:
             if logits.dim() == 3:
                 logits[:, :, self.blank_id] = -1e4
@@ -150,194 +187,50 @@ class Attention(nn.Module):
         return logits
 
     @torch.no_grad()
-    def _beam_decode(
-        self,
-        batch_H,
-        batch_max_length=25,
-        beam_size=5,
-        alpha: float = 0.9,
-        temperature: float = 1.7,
-    ):
+    def greedy_decode(
+        self, 
+        batch_H: torch.Tensor, 
+        batch_max_length: int = 25,
+        onnx_mode: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Greedy декодирование.
+        
+        Args:
+            batch_H: [B, W, hidden_size] encoder output
+            batch_max_length: максимальная длина последовательности
+            onnx_mode: если True, всегда декодирует max_length шагов (для ONNX)
+                      если False, останавливается при EOS (для PyTorch)
+        
+        Returns:
+            probs: [B, T, num_classes] логиты
+            preds: [B, T] предсказанные токены
+        """
         B = batch_H.size(0)
         device = batch_H.device
-        H, V = self.hidden_size, self.num_classes
 
-        h0 = torch.zeros(B, H, device=device)
-
-        # Initialize hidden state based on decoder type
-        if self.is_lstm:
-            c0 = torch.zeros(B, H, device=device)
-            beam_h = h0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
-            beam_c = c0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
-        else:
-            # GRU only needs h
-            beam_h = h0.unsqueeze(1).repeat(1, beam_size, 1).contiguous()
-            beam_c = None
-
-        beam_tokens = torch.full(
-            (B, beam_size, 1), self.sos_id, dtype=torch.long, device=device
-        )
-        beam_scores = torch.full((B, beam_size), float("-inf"), device=device)
-        beam_scores[:, 0] = 0.0
-
-        finished = torch.zeros(B, beam_size, dtype=torch.bool, device=device)
-
-        probs_trace = None
-
-        for t in range(batch_max_length):
-            last_tok = beam_tokens[:, :, -1].reshape(B * beam_size)  # [B*beam]
-            flat_h = beam_h.reshape(B * beam_size, H)
-
-            onehots = self._char_to_onehot(last_tok, device)  # [B*beam, V]
-
-            # Prepare hidden state based on decoder type
-            if self.is_lstm:
-                flat_c = beam_c.reshape(B * beam_size, H)
-                prev_hidden = (flat_h, flat_c)
-            else:
-                prev_hidden = flat_h
-
-            hidden, _ = self.attention_cell(
-                prev_hidden,
-                batch_H.repeat_interleave(beam_size, dim=0),
-                onehots,
-            )
-
-            # Extract h and c from hidden state
-            if self.is_lstm:
-                h_out, c_out = hidden
-            else:
-                h_out = hidden
-                c_out = None
-
-            out = F.dropout(h_out, p=self.dropout_p, training=self.training)
-            logits_t = self.generator(out)  # [B*beam, V]
-            logits_t = self._mask_logits(logits_t)
-            if temperature != 1.0:
-                eps = 1e-6
-                logits_t = logits_t / max(temperature, eps)
-
-            log_probs = F.log_softmax(logits_t, dim=-1)
-
-            log_probs = log_probs.view(B, beam_size, V)
-            h_new = h_out.view(B, beam_size, H)
-            if self.is_lstm:
-                c_new = c_out.view(B, beam_size, H)
-            else:
-                c_new = None
-
-            if finished.any():
-                mask = finished.unsqueeze(-1)  # [B, beam, 1]
-                log_probs = torch.where(
-                    mask.expand_as(log_probs),
-                    torch.full_like(log_probs, float("-inf")),
-                    log_probs,
-                )
-                log_probs[..., self.eos_id] = torch.where(
-                    mask.squeeze(-1),
-                    torch.zeros_like(log_probs[..., self.eos_id]),
-                    log_probs[..., self.eos_id],
-                )
-
-            next_sum = beam_scores.unsqueeze(-1) + log_probs  # [B, beam, V]
-            if alpha > 0:
-                lp = ((5.0 + (t + 1)) ** alpha) / (6.0**alpha)
-                next_scores = next_sum / lp
-            else:
-                next_scores = next_sum
-
-            next_scores_flat = next_scores.view(B, -1)  # [B, beam*V]
-            top_scores, top_idx = torch.topk(
-                next_scores_flat, k=beam_size, dim=-1
-            )  # [B, beam]
-
-            next_beam = top_idx // V  # [B, beam]
-            next_token = (top_idx % V).clamp(0, V - 1)  # [B, beam]
-
-            gather_h = h_new.gather(
-                1, next_beam.unsqueeze(-1).expand(-1, -1, H)
-            )  # [B, beam, H]
-
-            if self.is_lstm:
-                gather_c = c_new.gather(1, next_beam.unsqueeze(-1).expand(-1, -1, H))
-            else:
-                gather_c = None
-
-            beam_tokens = torch.cat(
-                [
-                    beam_tokens.gather(
-                        1, next_beam.unsqueeze(-1).expand(-1, -1, beam_tokens.size(-1))
-                    ),
-                    next_token.unsqueeze(-1),
-                ],
-                dim=-1,
-            )
-
-            if alpha > 0:
-                sum_logp = top_scores * lp
-            else:
-                sum_logp = top_scores
-            beam_scores = sum_logp
-
-            beam_h = gather_h
-            if self.is_lstm:
-                beam_c = gather_c
-            else:
-                beam_c = None
-
-            finished = finished.gather(1, next_beam) | (next_token == self.eos_id)
-
-            cur_logits = logits_t.view(B, beam_size, V)  # от текущего шага ДО выбора
-            cur_logits_sel = cur_logits.gather(
-                1, next_beam.unsqueeze(-1).expand(-1, -1, V)
-            )
-            if probs_trace is None:
-                probs_trace = cur_logits_sel.unsqueeze(2)  # [B, beam, 1, V]
-            else:
-                probs_trace = probs_trace.gather(
-                    1,
-                    next_beam.unsqueeze(-1)
-                    .unsqueeze(-1)
-                    .expand(-1, -1, probs_trace.size(2), V),
-                )
-                probs_trace = torch.cat(
-                    [probs_trace, cur_logits_sel.unsqueeze(2)], dim=2
-                )
-
-            if finished.all():
-                break
-
-        best_idx = beam_scores.argmax(-1)  # [B]
-        best_tokens = beam_tokens[
-            torch.arange(B, device=device), best_idx
-        ]  # [B, T+1], с SOS в начале
-
-        probs_best = probs_trace[torch.arange(B, device=device), best_idx]  # [B, T, V]
-
-        return probs_best, best_tokens[:, 1:]
-
-    @torch.no_grad()
-    def _greedy_decode(self, batch_H, batch_max_length=25):
-        B = batch_H.size(0)
-        device = batch_H.device
-        steps = batch_max_length + 1
-
+        # Инициализация скрытых состояний
         h = torch.zeros(B, self.hidden_size, device=device)
-
-        # Initialize hidden state based on decoder type
         if self.is_lstm:
             c = torch.zeros(B, self.hidden_size, device=device)
             hidden = (h, c)
         else:
             hidden = h
 
+        # Начинаем с SOS токена
         targets = torch.full((B,), self.sos_id, dtype=torch.long, device=device)
 
-        probs = []
-        preds = []
+        all_probs = []
+        all_preds = []
 
-        for t in range(steps):
-            onehots = self._char_to_onehot(targets, device=device)
+        # Декодирование
+        max_steps = batch_max_length if onnx_mode else (batch_max_length + 1)
+        
+        for t in range(max_steps):
+            # One-hot encoding (ONNX-friendly)
+            onehots = self._char_to_onehot(targets)
+            
+            # Attention step
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
 
             # Extract h from hidden state
@@ -346,61 +239,51 @@ class Attention(nn.Module):
             else:
                 h_out = hidden
 
+            # Generate logits
             out = F.dropout(h_out, p=self.dropout_p, training=self.training)
             logits_t = self.generator(out)
             logits_t = self._mask_logits(logits_t)
 
-            probs.append(logits_t.unsqueeze(1))
+            all_probs.append(logits_t.unsqueeze(1))
+
+            # Greedy choice
             next_tokens = logits_t.argmax(1)
-            preds.append(next_tokens.unsqueeze(1))
+            all_preds.append(next_tokens.unsqueeze(1))
 
             targets = next_tokens.clone()
 
-            if (next_tokens == self.eos_id).all():
+            # Early stopping (только для PyTorch режима)
+            if not onnx_mode and (next_tokens == self.eos_id).all():
                 break
 
-        probs = torch.cat(probs, dim=1)  # [B, T, V]
-        preds = torch.cat(preds, dim=1)  # [B, T]
+        probs = torch.cat(all_probs, dim=1)  # [B, T, V]
+        preds = torch.cat(all_preds, dim=1)  # [B, T]
+        
         return probs, preds
 
-    def forward(
+    def forward_training(
         self,
-        batch_H,
-        text=None,
-        is_train=True,
-        batch_max_length=25,
-        mode: str = "greedy",
-        beam_size: int = 5,
-        alpha: float = 0.6,
-        temperature: float = 1.0,
-    ):
-        # ===== 1. Инференс =====
-        if not is_train:
-            if mode == "greedy":
-                return self._greedy_decode(batch_H, batch_max_length)
-            elif mode == "beam":
-                return self._beam_decode(
-                    batch_H,
-                    batch_max_length,
-                    beam_size=beam_size,
-                    alpha=alpha,
-                    temperature=temperature,
-                )
-            else:
-                raise ValueError(f"Unknown decode mode: {mode}")
-
-        # ===== 2. Обучение (teacher forcing) =====
-        assert (
-            text is not None
-        ), "Для обучения необходимо подать `text` с <SOS> токеном в начале"
-
+        batch_H: torch.Tensor,
+        text: torch.Tensor,
+        batch_max_length: int = 25
+    ) -> torch.Tensor:
+        """
+        Training forward pass с teacher forcing.
+        
+        Args:
+            batch_H: [B, W, hidden_size] encoder output
+            text: [B, T] target tokens (с SOS токеном в начале)
+            batch_max_length: максимальная длина
+            
+        Returns:
+            logits: [B, T, num_classes]
+        """
         device = batch_H.device
         B = batch_H.size(0)
         steps = batch_max_length + 1
 
+        # Инициализация
         h = torch.zeros(B, self.hidden_size, device=device)
-
-        # Initialize hidden state based on decoder type
         if self.is_lstm:
             c = torch.zeros(B, self.hidden_size, device=device)
             hidden = (h, c)
@@ -411,7 +294,7 @@ class Attention(nn.Module):
         targets = text[:, 0]  # <SOS>
 
         for t in range(steps):
-            onehots = self._char_to_onehot(targets, device=device)
+            onehots = self._char_to_onehot(targets)
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
 
             # Extract h from hidden state
@@ -425,7 +308,7 @@ class Attention(nn.Module):
             out = F.dropout(h_out, p=self.dropout_p, training=self.training)
             logits_t = self.generator(out)
 
-            # scheduled sampling
+            # Scheduled sampling
             if t < steps - 1:
                 if torch.rand(1).item() < self.sampling_prob:
                     targets = logits_t.argmax(1)
@@ -437,33 +320,22 @@ class Attention(nn.Module):
         return logits
 
 
-class BidirectionalLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-        self.rnn = nn.LSTM(
-            input_size, hidden_size, bidirectional=True, batch_first=True
-        )
-        self.linear = nn.Linear(hidden_size * 2, output_size)
-
-    def forward(self, x):
-        self.rnn.flatten_parameters()
-        h, _ = self.rnn(x)  # [B, T, 2H]
-        out = self.linear(h)  # [B, T, D]
-        return out
-
+# ============================================================================
+# Main Model
+# ============================================================================
 
 class TRBAModel(nn.Module):
     def __init__(
         self,
-        num_classes,
-        hidden_size=256,
-        num_encoder_layers=2,
-        encoder_type="LSTM",  # "LSTM" or "GRU"
-        decoder_type="LSTM",  # "LSTM" or "GRU"
-        img_h=64,
-        img_w=256,
-        cnn_in_channels=3,
-        cnn_out_channels=512,
+        num_classes: int,
+        hidden_size: int = 256,
+        num_encoder_layers: int = 2,
+        encoder_type: str = "LSTM",
+        decoder_type: str = "LSTM",
+        img_h: int = 64,
+        img_w: int = 256,
+        cnn_in_channels: int = 3,
+        cnn_out_channels: int = 512,
         sos_id: int = 1,
         eos_id: int = 2,
         pad_id: int = 0,
@@ -471,10 +343,12 @@ class TRBAModel(nn.Module):
         enc_dropout_p: float = 0.1,
         dropblock_p: float = 0.0,
         dropblock_block_size: int = 5,
-        use_ctc_auxiliary: bool = False,
-        ctc_weight: float = 0.3,
+        use_ctc_head: bool = True,
+        use_attention_head: bool = True,
     ):
         super().__init__()
+
+        assert use_ctc_head or use_attention_head, "Хотя бы одна голова должна быть включена"
 
         self.num_classes = num_classes
         self.hidden_size = hidden_size
@@ -483,9 +357,10 @@ class TRBAModel(nn.Module):
         self.decoder_type = decoder_type.upper()
         self.img_h = img_h
         self.img_w = img_w
-        self.cnn_in_channels = cnn_in_channels
-        self.cnn_out_channels = cnn_out_channels
+        self.use_ctc_head = use_ctc_head
+        self.use_attention_head = use_attention_head
 
+        # ===== CNN Encoder =====
         self.cnn = SEResNet31(
             in_channels=cnn_in_channels,
             out_channels=cnn_out_channels,
@@ -493,8 +368,7 @@ class TRBAModel(nn.Module):
             dropblock_block_size=dropblock_block_size,
         )
 
-        self.pool = nn.AdaptiveAvgPool2d((1, None))  # -> [B, C, 1, W]
-
+        # ===== BiRNN Encoder =====
         enc_dim = self.cnn.out_channels
 
         # Choose encoder type
@@ -503,120 +377,220 @@ class TRBAModel(nn.Module):
         elif self.encoder_type == "GRU":
             encoder_class = BidirectionalGRU
         else:
-            raise ValueError(
-                f"Unknown encoder_type: {encoder_type}. Use 'LSTM' or 'GRU'"
-            )
+            raise ValueError(f"encoder_type должен быть 'LSTM' или 'GRU', получен: {encoder_type}")
 
         encoder_layers = []
         for i in range(num_encoder_layers):
             input_dim = enc_dim if i == 0 else hidden_size
             encoder_layers.append(encoder_class(input_dim, hidden_size, hidden_size))
+        
         self.enc_rnn = nn.Sequential(*encoder_layers)
-        enc_dim = hidden_size
-
         self.enc_dropout = nn.Dropout(enc_dropout_p)
 
-        self.attn = Attention(
-            input_size=enc_dim,
-            hidden_size=hidden_size,
-            num_classes=num_classes,
-            sos_id=sos_id,
-            eos_id=eos_id,
-            pad_id=pad_id,
-            blank_id=blank_id,
-            dropout_p=0.1,
-            sampling_prob=0.0,
-            decoder_type=self.decoder_type,
-        )
-
-        # CTC auxiliary head for stronger encoder learning
-        self.use_ctc_auxiliary = use_ctc_auxiliary
-        self.ctc_weight = ctc_weight
-        if self.use_ctc_auxiliary:
-            # CTC head: linear projection from encoder output to num_classes
+        # ===== CTC Head (опционально) =====
+        if self.use_ctc_head:
             self.ctc_head = nn.Linear(hidden_size, num_classes)
-            self.ctc_loss = nn.CTCLoss(
+            self.ctc_loss_fn = nn.CTCLoss(
                 blank=blank_id, reduction="mean", zero_infinity=True
             )
 
-    def encode(self, x):
-        f = self.cnn(x)  # [B, C, H, W]
-        f = self.pool(f).squeeze(2)  # [B, C, W]
-        f = f.permute(0, 2, 1)  # [B, W, C]
-        f = self.enc_rnn(f)  # [B, W, H]
+        # ===== Attention Head (опционально) =====
+        if self.use_attention_head:
+            self.attention_decoder = AttentionDecoder(
+                input_size=hidden_size,
+                hidden_size=hidden_size,
+                num_classes=num_classes,
+                sos_id=sos_id,
+                eos_id=eos_id,
+                pad_id=pad_id,
+                blank_id=blank_id,
+                dropout_p=0.1,
+                sampling_prob=0.0,
+                decoder_type=self.decoder_type,
+            )
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        # CNN
+        f = self.cnn(x)  # [B, C, H', W']
+        
+        # Pooling по высоте (ONNX-compatible: mean вместо AdaptiveAvgPool)
+        f = f.mean(dim=2)  # [B, C, W']
+        
+        # Permute для RNN
+        f = f.permute(0, 2, 1)  # [B, W', C]
+        
+        # BiRNN encoder (без flatten_parameters для ONNX)
+        f = self.enc_rnn(f)  # [B, W', hidden_size]
         f = self.enc_dropout(f)
+        
         return f
 
-    def compute_ctc_loss(self, enc_output, target_y, target_lengths):
+    def forward_ctc(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Compute CTC loss for auxiliary supervision.
-
+        Forward pass для CTC декодирования.
+        
         Args:
-            enc_output: [B, W, H] encoder output
-            target_y: [B*T] flattened targets
-            target_lengths: [B] actual lengths of each sequence
-
+            x: [B, 3, H, W] input images
+            
         Returns:
-            ctc_loss value or 0 if CTC is disabled
+            ctc_logits: [B, W, num_classes] CTC логиты
         """
-        if not self.use_ctc_auxiliary:
-            return torch.tensor(0.0, device=enc_output.device)
+        assert self.use_ctc_head, "CTC head не включена"
+        
+        enc_output = self.encode(x)  # [B, W, hidden_size]
+        ctc_logits = self.ctc_head(enc_output)  # [B, W, num_classes]
+        
+        return ctc_logits
 
-        # Project encoder output to vocab space
-        # [B, W, H] -> [B, W, num_classes]
-        ctc_logits = self.ctc_head(enc_output)  # [B, W, V]
-
-        # CTC expects: [T, B, V] where T is max sequence length
-        ctc_logits = ctc_logits.permute(1, 0, 2)  # [W, B, V]
-
-        # Get sequence lengths from encoder (W dimension)
-        B = enc_output.size(0)
-        input_lengths = torch.full(
-            (B,), enc_output.size(1), dtype=torch.long, device=enc_output.device
-        )
-
-        # Reshape target_y to get actual target sequences
-        # target_y is [B*T], need to split by batch
-        # But we need target_lengths to know where each sequence ends
-
-        # For simplicity: create target_lengths from non-PAD positions
-        target_y_reshaped = target_y.reshape(B, -1)  # [B, T]
-        target_lengths = (target_y_reshaped != self.attn.pad_id).sum(dim=1)  # [B]
-
-        # Flatten targets for CTC
-        target_y_flat = target_y.reshape(B, -1)[
-            :, : (target_lengths.max().item())
-        ]  # [B, T_max]
-
-        try:
-            ctc_loss_val = self.ctc_loss(
-                ctc_logits, target_y_flat, input_lengths, target_lengths
+    def forward_attention(
+        self,
+        x: torch.Tensor,
+        text: Optional[torch.Tensor] = None,
+        is_train: bool = False,
+        batch_max_length: int = 25,
+        onnx_mode: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass для Attention декодирования.
+        
+        Args:
+            x: [B, 3, H, W] input images
+            text: [B, T] target tokens (только для обучения)
+            is_train: режим обучения или инференс
+            batch_max_length: максимальная длина последовательности
+            onnx_mode: ONNX режим (всегда max_length шагов)
+            
+        Returns:
+            logits: [B, T, num_classes]
+            preds: [B, T] (только для инференса) или None
+        """
+        assert self.use_attention_head, "Attention head не включена"
+        
+        enc_output = self.encode(x)  # [B, W, hidden_size]
+        
+        if is_train:
+            assert text is not None, "text обязателен для обучения"
+            logits = self.attention_decoder.forward_training(
+                enc_output, text, batch_max_length
             )
-        except:
-            # If CTC fails (e.g., target_lengths > input_lengths), return 0
-            ctc_loss_val = torch.tensor(0.0, device=enc_output.device)
-
-        return ctc_loss_val
+            return logits, None
+        else:
+            logits, preds = self.attention_decoder.greedy_decode(
+                enc_output, batch_max_length, onnx_mode=onnx_mode
+            )
+            return logits, preds
 
     def forward(
         self,
-        x,
-        text=None,
-        is_train=True,
-        batch_max_length=25,
-        mode: str = "greedy",
-        beam_size: int = 5,
-        alpha: float = 0.6,
-        temperature: float = 1.0,
-    ):
-        enc = self.encode(x)
-        return self.attn(
-            enc,
-            text=text,
-            is_train=is_train,
-            batch_max_length=batch_max_length,
-            mode=mode,
-            beam_size=beam_size,
-            alpha=alpha,
-            temperature=temperature,
-        )
+        x: torch.Tensor,
+        text: Optional[torch.Tensor] = None,
+        is_train: bool = True,
+        batch_max_length: int = 25,
+        mode: str = "attention",
+        onnx_mode: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Unified forward pass.
+        
+        Использование:
+            Training (PyTorch):
+                result = model(images, text=targets, mode="both", is_train=True)
+                # Получаем оба выхода для dual loss
+                
+            Inference (PyTorch):
+                result = model(images, mode="attention", is_train=False)
+                preds = result["attention_preds"]
+                
+            ONNX Export:
+                # Используйте wrapper из export_trba_to_onnx.py
+                # Не нужно вызывать этот метод напрямую
+        
+        Args:
+            x: [B, 3, H, W] input images
+            text: [B, T] target tokens (только для обучения)
+            is_train: режим обучения
+            batch_max_length: максимальная длина последовательности
+            mode: "ctc" | "attention" | "both"
+            onnx_mode: True для ONNX экспорта (всегда max_length шагов)
+            
+        Returns:
+            dict с ключами в зависимости от mode:
+                "ctc_logits": [B, W, num_classes]
+                "attention_logits": [B, T, num_classes]
+                "attention_preds": [B, T] (только inference)
+        """
+        result = {}
+        
+        if mode == "ctc":
+            result["ctc_logits"] = self.forward_ctc(x)
+            
+        elif mode == "attention":
+            logits, preds = self.forward_attention(
+                x, text, is_train, batch_max_length, onnx_mode
+            )
+            result["attention_logits"] = logits
+            if preds is not None:
+                result["attention_preds"] = preds
+                
+        elif mode == "both":
+            enc_output = self.encode(x)
+            
+            if self.use_ctc_head:
+                result["ctc_logits"] = self.ctc_head(enc_output)
+            
+            if self.use_attention_head:
+                if is_train:
+                    assert text is not None, "text обязателен для обучения"
+                    logits = self.attention_decoder.forward_training(
+                        enc_output, text, batch_max_length
+                    )
+                    result["attention_logits"] = logits
+                else:
+                    logits, preds = self.attention_decoder.greedy_decode(
+                        enc_output, batch_max_length, onnx_mode=onnx_mode
+                    )
+                    result["attention_logits"] = logits
+                    result["attention_preds"] = preds
+        else:
+            raise ValueError(f"mode должен быть 'ctc', 'attention' или 'both', получен: {mode}")
+        
+        return result
+
+    def compute_ctc_loss(
+        self, 
+        ctc_logits: torch.Tensor, 
+        targets: torch.Tensor, 
+        target_lengths: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Вычисление CTC loss.
+        
+        Args:
+            ctc_logits: [B, W, num_classes]
+            targets: [B, T] target tokens
+            target_lengths: [B] длины целевых последовательностей
+            
+        Returns:
+            ctc_loss
+        """
+        if not self.use_ctc_head:
+            return torch.tensor(0.0, device=ctc_logits.device)
+        
+        # CTC expects [W, B, num_classes]
+        ctc_logits = ctc_logits.permute(1, 0, 2)  # [W, B, num_classes]
+        
+        B, W = ctc_logits.size(1), ctc_logits.size(0)
+        input_lengths = torch.full((B,), W, dtype=torch.long, device=ctc_logits.device)
+        
+        try:
+            ctc_loss = self.ctc_loss_fn(
+                ctc_logits.log_softmax(2), 
+                targets, 
+                input_lengths, 
+                target_lengths
+            )
+        except:
+            # Если CTC падает, возвращаем 0
+            ctc_loss = torch.tensor(0.0, device=ctc_logits.device)
+        
+        return ctc_loss

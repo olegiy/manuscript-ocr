@@ -290,14 +290,12 @@ def visualize_predictions_tensorboard(
         return
 
     # Настройка декодирования
-    forward_kwargs = {"is_train": False, "batch_max_length": max_len}
-    if mode == "greedy":
-        forward_kwargs["mode"] = "greedy"
-    elif mode == "beam":
-        forward_kwargs["mode"] = "beam"
-        forward_kwargs["beam_size"] = decode_kwargs.get("beam_size", 8)
-        forward_kwargs["alpha"] = decode_kwargs.get("alpha", 0.9)
-        forward_kwargs["temperature"] = decode_kwargs.get("temperature", 1.7)
+    # mode теперь должен быть "ctc" или "attention"
+    forward_kwargs = {
+        "is_train": False, 
+        "batch_max_length": max_len,
+        "mode": mode  # "ctc" or "attention"
+    }
 
     # Обрабатываем примеры
     images_with_text = []
@@ -312,10 +310,17 @@ def visualize_predictions_tensorboard(
             )
 
             # Prediction
-            encoded = model.encode(img_device)
-            _, pred_ids = model.attn(encoded, **forward_kwargs)
+            result = model(img_device, **forward_kwargs)
+            
+            # Get predictions based on mode
+            if mode == "attention":
+                pred_ids = result["attention_preds"][0]
+            else:  # ctc
+                ctc_logits = result["ctc_logits"]
+                pred_ids = ctc_logits.argmax(dim=-1)[0]
+                
             pred_text = decode_tokens(
-                pred_ids[0].cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
+                pred_ids.cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
             )
 
             # Конвертируем изображение
@@ -469,8 +474,10 @@ def run_training(cfg: Config, device: str = "cuda"):
             "val_cer",
             "val_wer",
         ]
-        if dual_validate:
-            header.extend(["val_acc_beam", "val_cer_beam", "val_wer_beam"])
+        # Add secondary metrics columns if using both decoder heads
+        if decoder_head == "both":
+            # Will add attention/ctc specific columns
+            header.extend(["val_acc_secondary", "val_cer_secondary", "val_wer_secondary"])
         header.append("lr")
         with open(metrics_csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -498,7 +505,16 @@ def run_training(cfg: Config, device: str = "cuda"):
     decoder_type = getattr(cfg, "decoder_type", "LSTM")
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
-    use_ctc_auxiliary = getattr(cfg, "use_ctc_auxiliary", False)
+    
+    # Decoder head selection: "ctc" | "attention" | "both"
+    decoder_head = getattr(cfg, "decoder_head", "attention")
+    if decoder_head not in ("ctc", "attention", "both"):
+        raise ValueError(f"decoder_head должен быть 'ctc', 'attention' или 'both', получен: {decoder_head}")
+    
+    use_ctc_head = decoder_head in ("ctc", "both")
+    use_attention_head = decoder_head in ("attention", "both")
+    
+    # CTC loss weight (используется только при decoder_head="both")
     ctc_weight = getattr(cfg, "ctc_weight", 0.3)
 
     model = TRBAModel(
@@ -515,8 +531,8 @@ def run_training(cfg: Config, device: str = "cuda"):
         eos_id=EOS,
         pad_id=PAD,
         blank_id=BLANK,
-        use_ctc_auxiliary=use_ctc_auxiliary,
-        ctc_weight=ctc_weight,
+        use_ctc_head=use_ctc_head,
+        use_attention_head=use_attention_head,
     ).to(device)
 
     # --- optional pretrained weights ---
@@ -933,39 +949,65 @@ def run_training(cfg: Config, device: str = "cuda"):
 
             optimizer.zero_grad(set_to_none=True)
             with amp.autocast():
-                # Encode for potential CTC loss
-                enc_output = model.encode(imgs)
-
-                # Attention-based decoder
-                logits = model(
-                    imgs, text=text_in, is_train=True, batch_max_length=max_len
-                )  # [B,T,V]
-                attn_loss = criterion(
-                    logits.reshape(-1, logits.size(-1)), target_y.reshape(-1)
+                # New unified API
+                result = model(
+                    imgs, 
+                    text=text_in, 
+                    is_train=True, 
+                    batch_max_length=max_len,
+                    mode=decoder_head  # "ctc", "attention", or "both"
                 )
-
-                # Auxiliary CTC loss if enabled
-                loss = attn_loss
+                
+                # Compute loss based on decoder_head
+                loss = torch.tensor(0.0, device=device)
+                attn_loss_val = torch.tensor(0.0, device=device)
                 ctc_loss_val = torch.tensor(0.0, device=device)
-                if use_ctc_auxiliary:
-                    ctc_loss_val = model.compute_ctc_loss(enc_output, target_y, lengths)
-                    loss = attn_loss * (1 - ctc_weight) + ctc_loss_val * ctc_weight
+                
+                if decoder_head == "attention":
+                    # Pure attention mode
+                    attn_logits = result["attention_logits"]
+                    attn_loss_val = criterion(
+                        attn_logits.reshape(-1, attn_logits.size(-1)), 
+                        target_y.reshape(-1)
+                    )
+                    loss = attn_loss_val
+                    
+                elif decoder_head == "ctc":
+                    # Pure CTC mode
+                    ctc_logits = result["ctc_logits"]
+                    ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
+                    loss = ctc_loss_val
+                    
+                elif decoder_head == "both":
+                    # Dual loss mode
+                    attn_logits = result["attention_logits"]
+                    ctc_logits = result["ctc_logits"]
+                    
+                    attn_loss_val = criterion(
+                        attn_logits.reshape(-1, attn_logits.size(-1)), 
+                        target_y.reshape(-1)
+                    )
+                    ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
+                    
+                    # Weighted combination
+                    loss = attn_loss_val * (1 - ctc_weight) + ctc_loss_val * ctc_weight
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
             loss_val = float(loss.item())
-            attn_loss_val = float(attn_loss.item())
+            attn_loss_scalar = float(attn_loss_val.item())
             ctc_loss_scalar = float(ctc_loss_val.item())
 
             total_train_loss += loss_val
-            total_attn_loss += attn_loss_val
+            total_attn_loss += attn_loss_scalar
             total_ctc_loss += ctc_loss_scalar
 
             writer.add_scalar("Loss/train_step", loss_val, global_step)
-            writer.add_scalar("Loss/train_attn_step", attn_loss_val, global_step)
-            if use_ctc_auxiliary:
+            if use_attention_head:
+                writer.add_scalar("Loss/train_attn_step", attn_loss_scalar, global_step)
+            if use_ctc_head:
                 writer.add_scalar("Loss/train_ctc_step", ctc_loss_scalar, global_step)
             writer.add_scalar("LR", optimizer.param_groups[0]["lr"], global_step)
             global_step += 1
@@ -986,8 +1028,9 @@ def run_training(cfg: Config, device: str = "cuda"):
         val_wer = None
 
         writer.add_scalar("Loss/train_epoch", avg_train_loss, epoch)
-        writer.add_scalar("Loss/train_attn_epoch", avg_attn_loss, epoch)
-        if use_ctc_auxiliary:
+        if use_attention_head:
+            writer.add_scalar("Loss/train_attn_epoch", avg_attn_loss, epoch)
+        if use_ctc_head:
             writer.add_scalar("Loss/train_ctc_epoch", avg_ctc_loss, epoch)
 
         if should_eval:
@@ -997,22 +1040,17 @@ def run_training(cfg: Config, device: str = "cuda"):
             total_val_loss = 0.0
             total_samples = 0
 
-            eval_modes = {
-                "greedy": {
-                    "forward_kwargs": {
-                        "mode": "greedy",
-                    }
-                }
-            }
-            if dual_validate:
-                eval_modes["beam"] = {
-                    "forward_kwargs": {
-                        "mode": "beam",
-                        "beam_size": beam_size,
-                        "alpha": beam_alpha,
-                        "temperature": beam_temperature,
-                    }
-                }
+            # Validation modes based on decoder_head
+            eval_modes = {}
+            
+            if decoder_head == "attention":
+                eval_modes["attention"] = {"mode": "attention"}
+            elif decoder_head == "ctc":
+                eval_modes["ctc"] = {"mode": "ctc"}
+            elif decoder_head == "both":
+                # Validate both heads separately
+                eval_modes["attention"] = {"mode": "attention"}
+                eval_modes["ctc"] = {"mode": "ctc"}
 
             aggregate_mode_stats = {
                 mode_name: {
@@ -1041,27 +1079,65 @@ def run_training(cfg: Config, device: str = "cuda"):
                         target_y = target_y.to(device, non_blocking=pin_memory)
 
                         with amp.autocast():
-                            logits_tf = model(
-                                imgs,
-                                text=text_in,
-                                is_train=True,
-                                batch_max_length=max_len,
-                            )
-                            val_loss = criterion(
-                                logits_tf.reshape(-1, logits_tf.size(-1)),
-                                target_y.reshape(-1),
-                            )
+                            # Loss calculation based on decoder_head
+                            if decoder_head == "attention":
+                                result = model(
+                                    imgs,
+                                    text=text_in,
+                                    is_train=True,
+                                    batch_max_length=max_len,
+                                    mode="attention"
+                                )
+                                logits_tf = result["attention_logits"]
+                                val_loss = criterion(
+                                    logits_tf.reshape(-1, logits_tf.size(-1)),
+                                    target_y.reshape(-1),
+                                )
+                            elif decoder_head == "ctc":
+                                result = model(
+                                    imgs,
+                                    text=text_in,
+                                    is_train=True,
+                                    batch_max_length=max_len,
+                                    mode="ctc"
+                                )
+                                ctc_logits = result["ctc_logits"]
+                                val_loss = model.compute_ctc_loss(ctc_logits, target_y, lengths)
+                            else:  # both
+                                result = model(
+                                    imgs,
+                                    text=text_in,
+                                    is_train=True,
+                                    batch_max_length=max_len,
+                                    mode="both"
+                                )
+                                attn_logits = result["attention_logits"]
+                                ctc_logits = result["ctc_logits"]
+                                
+                                attn_loss_val = criterion(
+                                    attn_logits.reshape(-1, attn_logits.size(-1)),
+                                    target_y.reshape(-1),
+                                )
+                                ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
+                                val_loss = attn_loss_val * (1 - ctc_weight) + ctc_loss_val * ctc_weight
+                                
                         total_val_loss_single += float(val_loss.item())
 
                         preds_batch = {}
                         for mode_name, mode_cfg in eval_modes.items():
-                            forward_kwargs = dict(mode_cfg["forward_kwargs"])
-                            _, pred_ids = model(
+                            result = model(
                                 imgs,
                                 is_train=False,
                                 batch_max_length=max_len,
-                                **forward_kwargs,
+                                mode=mode_cfg["mode"],
                             )
+                            # Get predictions based on mode
+                            if mode_cfg["mode"] == "attention":
+                                pred_ids = result["attention_preds"]
+                            else:  # ctc
+                                # CTC greedy decode
+                                ctc_logits = result["ctc_logits"]
+                                pred_ids = ctc_logits.argmax(dim=-1)  # [B, W]
                             preds_batch[mode_name] = pred_ids.cpu()
 
                         tgt_ids = target_y.cpu()
@@ -1135,23 +1211,30 @@ def run_training(cfg: Config, device: str = "cuda"):
                     stats["total_wer_sum"] / total_pred,
                 )
 
-            val_acc, val_cer, val_wer = _finalize("greedy")
-            val_acc_beam = val_cer_beam = val_wer_beam = None
-            if dual_validate:
-                val_acc_beam, val_cer_beam, val_wer_beam = _finalize("beam")
+            # Primary metrics (first mode)
+            primary_mode_name = list(eval_modes.keys())[0]
+            val_acc, val_cer, val_wer = _finalize(primary_mode_name)
+            
+            # Secondary metrics if both heads
+            val_acc_secondary = val_cer_secondary = val_wer_secondary = None
+            if len(eval_modes) > 1:
+                secondary_mode_name = list(eval_modes.keys())[1]
+                val_acc_secondary, val_cer_secondary, val_wer_secondary = _finalize(secondary_mode_name)
 
             writer.add_scalar("Loss/val_epoch", avg_val_loss, epoch)
-            writer.add_scalar("Accuracy/val", val_acc, epoch)
-            writer.add_scalar("CER/val", val_cer, epoch)
-            writer.add_scalar("WER/val", val_wer, epoch)
-            if dual_validate:
-                writer.add_scalar("Accuracy/val_beam", val_acc_beam, epoch)
-                writer.add_scalar("CER/val_beam", val_cer_beam, epoch)
-                writer.add_scalar("WER/val_beam", val_wer_beam, epoch)
+            writer.add_scalar(f"Accuracy/val_{primary_mode_name}", val_acc, epoch)
+            writer.add_scalar(f"CER/val_{primary_mode_name}", val_cer, epoch)
+            writer.add_scalar(f"WER/val_{primary_mode_name}", val_wer, epoch)
+            
+            if val_acc_secondary is not None:
+                writer.add_scalar(f"Accuracy/val_{secondary_mode_name}", val_acc_secondary, epoch)
+                writer.add_scalar(f"CER/val_{secondary_mode_name}", val_cer_secondary, epoch)
+                writer.add_scalar(f"WER/val_{secondary_mode_name}", val_wer_secondary, epoch)
 
             # Визуализация случайных примеров в TensorBoard
             if val_loaders_individual:
-                # Используем первый валидационный загрузчик для визуализации
+                # Визуализация для основной головы
+                primary_mode = "attention" if use_attention_head else "ctc"
                 visualize_predictions_tensorboard(
                     model=model,
                     val_loader=val_loaders_individual[0],
@@ -1163,13 +1246,14 @@ def run_training(cfg: Config, device: str = "cuda"):
                     writer=writer,
                     num_samples=10,
                     max_len=max_len,
-                    mode="greedy",
+                    mode=primary_mode,
                     epoch=epoch,
                     logger=logger,
                 )
 
-                # Если используется beam search, показываем и его результаты
-                if dual_validate:
+                # Если decoder_head="both", визуализируем обе головы
+                if decoder_head == "both":
+                    secondary_mode = "ctc" if primary_mode == "attention" else "attention"
                     visualize_predictions_tensorboard(
                         model=model,
                         val_loader=val_loaders_individual[0],
@@ -1181,12 +1265,9 @@ def run_training(cfg: Config, device: str = "cuda"):
                         writer=writer,
                         num_samples=10,
                         max_len=max_len,
-                        mode="beam",
+                        mode=secondary_mode,
                         epoch=epoch,
                         logger=logger,
-                        beam_size=beam_size,
-                        alpha=beam_alpha,
-                        temperature=beam_temperature,
                     )
         else:
             logger.info(
@@ -1204,12 +1285,12 @@ def run_training(cfg: Config, device: str = "cuda"):
                     f"{val_cer:.6f}",
                     f"{val_wer:.6f}",
                 ]
-                if dual_validate:
+                if val_acc_secondary is not None:
                     row.extend(
                         [
-                            f"{val_acc_beam:.6f}",
-                            f"{val_cer_beam:.6f}",
-                            f"{val_wer_beam:.6f}",
+                            f"{val_acc_secondary:.6f}",
+                            f"{val_cer_secondary:.6f}",
+                            f"{val_wer_secondary:.6f}",
                         ]
                     )
                 row.append(f"{optimizer.param_groups[0]['lr']:.6e}")
@@ -1241,12 +1322,13 @@ def run_training(cfg: Config, device: str = "cuda"):
                     f"WER={val_wer:.4f}",
                 ]
             )
-            if dual_validate:
+            if val_acc_secondary is not None:
+                secondary_mode_name = list(eval_modes.keys())[1]
                 msg_parts.extend(
                     [
-                        f"acc_beam={val_acc_beam:.4f}",
-                        f"CER_beam={val_cer_beam:.4f}",
-                        f"WER_beam={val_wer_beam:.4f}",
+                        f"acc_{secondary_mode_name}={val_acc_secondary:.4f}",
+                        f"CER_{secondary_mode_name}={val_cer_secondary:.4f}",
+                        f"WER_{secondary_mode_name}={val_wer_secondary:.4f}",
                     ]
                 )
         else:
@@ -1287,7 +1369,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     "decoder_type": decoder_type,
                     "cnn_in_channels": cnn_in_channels,
                     "cnn_out_channels": cnn_out_channels,
-                    "use_ctc_auxiliary": use_ctc_auxiliary,
+                    "decoder_head": decoder_head,
                     "ctc_weight": ctc_weight,
                     "charset_path": charset_path,
                     "train_csvs": train_csvs,
@@ -1331,7 +1413,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "decoder_type": decoder_type,
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
-                        "use_ctc_auxiliary": use_ctc_auxiliary,
+                        "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
                         "train_csvs": train_csvs,
@@ -1376,7 +1458,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "decoder_type": decoder_type,
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
-                        "use_ctc_auxiliary": use_ctc_auxiliary,
+                        "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
                         "train_csvs": train_csvs,
