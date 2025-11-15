@@ -15,7 +15,31 @@ CNN_BACKBONES = {
     "lite": SEResNet31Lite,
 }
 
+class TinySelfAttention(nn.Module):
+    """
+    Миниатюрный self-attention блок для горизонтального контекста.
+    Встроен в энкодер, работает параллельно (в отличие от autoregressive attention).
+    """
 
+    def __init__(self, dim: int, nhead: int = 2, dropout: float = 0.1):
+        super().__init__()
+        layer = nn.TransformerEncoderLayer(
+            d_model=dim,
+            nhead=nhead,
+            dim_feedforward=dim * 2,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,  # стабильнее при малых батчах
+        )
+        self.transformer = nn.TransformerEncoder(layer, num_layers=1)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, T, C]
+        """
+        out = self.transformer(x)
+        return self.norm(out)
 # ============================================================================
 # Encoder Components
 # ============================================================================
@@ -34,6 +58,37 @@ class BidirectionalLSTM(nn.Module):
         h, _ = self.rnn(x)  # [B, T, 2H]
         out = self.linear(h)  # [B, T, D]
         return out
+
+class ConvEncoder1D(nn.Module):
+    """
+    Лёгкий CNN-энкодер вместо BiLSTM.
+    Использует стек 1D-свёрток (Conv1d) для контекста вдоль ширины текста.
+    Полностью ONNX-friendly и параллелится на CPU/GPU.
+    """
+
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 2, dropout: float = 0.1):
+        super().__init__()
+        layers = []
+        in_ch = input_size
+        for i in range(num_layers):
+            layers += [
+                nn.Conv1d(in_ch, hidden_size, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm1d(hidden_size),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+            ]
+            in_ch = hidden_size
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, T, C] → [B, C, T]
+        out: [B, T, C]
+        """
+        x = x.transpose(1, 2)          # [B, C, T]
+        x = self.net(x)                # [B, hidden, T]
+        x = x.transpose(1, 2)          # [B, T, hidden]
+        return x
 
 
 # ============================================================================
@@ -291,15 +346,14 @@ class TRBAModel(nn.Module):
             out_channels=cnn_out_channels,
         )
 
-        # ===== BiRNN Encoder =====
+        # ===== 1D-CNN Encoder =====
         enc_dim = self.cnn.out_channels
-
-        encoder_layers = []
-        for i in range(num_encoder_layers):
-            input_dim = enc_dim if i == 0 else hidden_size
-            encoder_layers.append(BidirectionalLSTM(input_dim, hidden_size, hidden_size))
-        
-        self.enc_rnn = nn.Sequential(*encoder_layers)
+        self.enc_conv = ConvEncoder1D(
+            input_size=enc_dim,
+            hidden_size=hidden_size,
+            num_layers=num_encoder_layers,
+            dropout=enc_dropout_p,
+        )
         self.enc_dropout = nn.Dropout(enc_dropout_p)
 
         # ===== CTC Head (опционально) =====
@@ -333,8 +387,8 @@ class TRBAModel(nn.Module):
         # Permute для RNN
         f = f.permute(0, 2, 1)  # [B, W', C]
         
-        # BiRNN encoder (без flatten_parameters для ONNX)
-        f = self.enc_rnn(f)  # [B, W', hidden_size]
+        # 1D-CNN encoder (без flatten_parameters для ONNX)
+        f = self.enc_conv(f)  # [B, W', hidden_size]
         f = self.enc_dropout(f)
         
         return f

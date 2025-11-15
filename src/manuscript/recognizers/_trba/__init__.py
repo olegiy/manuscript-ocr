@@ -473,7 +473,7 @@ class TRBA:
         img_w: int = 256,
         max_len: int = 25,
         hidden_size: int = 256,
-        num_encoder_layers: int = 2,
+        num_encoder_layers: int = 3,
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
         cnn_backbone: str = "seresnet31",
