@@ -4,6 +4,16 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict, Any
 
 from .seresnet31 import SEResNet31
+from .seresnetlite31 import SEResNet31Lite
+
+
+CNN_BACKBONES = {
+    "seresnet31": SEResNet31,
+    "resnet31": SEResNet31,
+    "seresnet31-lite": SEResNet31Lite,
+    "seresnetlite31": SEResNet31Lite,
+    "lite": SEResNet31Lite,
+}
 
 
 # ============================================================================
@@ -16,22 +26,6 @@ class BidirectionalLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.rnn = nn.LSTM(
-            input_size, hidden_size, bidirectional=True, batch_first=True
-        )
-        self.linear = nn.Linear(hidden_size * 2, output_size)
-
-    def forward(self, x):
-        h, _ = self.rnn(x)  # [B, T, 2H]
-        out = self.linear(h)  # [B, T, D]
-        return out
-
-
-class BidirectionalGRU(nn.Module):
-    """BiGRU encoder layer - ONNX compatible."""
-    
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-        self.rnn = nn.GRU(
             input_size, hidden_size, bidirectional=True, batch_first=True
         )
         self.linear = nn.Linear(hidden_size * 2, output_size)
@@ -88,48 +82,6 @@ class AttentionCell(nn.Module):
         return cur_hidden, alpha
 
 
-class AttentionCellGRU(nn.Module):
-    """Attention cell with GRU - ONNX compatible."""
-    
-    def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
-        super().__init__()
-        self.i2h = nn.Linear(input_size, hidden_size, bias=False)
-        self.h2h = nn.Linear(hidden_size, hidden_size)
-        self.score = nn.Linear(hidden_size, 1, bias=False)
-        self.rnn = nn.GRUCell(input_size + num_embeddings, hidden_size)
-        self.hidden_size = hidden_size
-        self.dropout_p = dropout_p
-
-    def forward(self, prev_hidden, batch_H, char_onehots):
-        """
-        Args:
-            prev_hidden: [B, H] hidden state for GRU
-            batch_H: [B, Tenc, C] encoder output
-            char_onehots: [B, V] one-hot encoded character
-            
-        Returns:
-            cur_hidden: [B, H] new hidden state
-            alpha: [B, Tenc, 1] attention weights
-        """
-        # Attention mechanism
-        proj_H = self.i2h(batch_H)  # [B, Tenc, H]
-        proj_h = self.h2h(prev_hidden).unsqueeze(1)
-        e = self.score(torch.tanh(proj_H + proj_h))  # [B, Tenc, 1]
-
-        alpha = F.softmax(e, dim=1)  # [B, Tenc, 1]
-        alpha = F.dropout(alpha, p=self.dropout_p, training=self.training)
-
-        # Context vector
-        context = torch.bmm(alpha.transpose(1, 2), batch_H).squeeze(1)  # [B, C]
-        
-        # Concatenate context and character embedding
-        x = torch.cat([context, char_onehots], 1)  # [B, C + V]
-        
-        # Decoder step
-        cur_hidden = self.rnn(x, prev_hidden)  # [B, H]
-        return cur_hidden, alpha
-
-
 class AttentionDecoder(nn.Module):
     def __init__(
         self,
@@ -142,26 +94,12 @@ class AttentionDecoder(nn.Module):
         blank_id: Optional[int] = None,
         dropout_p: float = 0.1,
         sampling_prob: float = 0.0,
-        decoder_type: str = "LSTM",
     ):
         super().__init__()
 
-        # Choose decoder cell type
-        decoder_type = decoder_type.upper()
-        if decoder_type == "LSTM":
-            self.attention_cell = AttentionCell(
-                input_size, hidden_size, num_classes, dropout_p=dropout_p
-            )
-            self.is_lstm = True
-        elif decoder_type == "GRU":
-            self.attention_cell = AttentionCellGRU(
-                input_size, hidden_size, num_classes, dropout_p=dropout_p
-            )
-            self.is_lstm = False
-        else:
-            raise ValueError(f"decoder_type должен быть 'LSTM' или 'GRU', получен: {decoder_type}")
-
-        self.decoder_type = decoder_type
+        self.attention_cell = AttentionCell(
+            input_size, hidden_size, num_classes, dropout_p=dropout_p
+        )
         self.hidden_size = hidden_size
         self.num_classes = num_classes
 
@@ -211,11 +149,8 @@ class AttentionDecoder(nn.Module):
 
         # Инициализация скрытых состояний
         h = torch.zeros(B, self.hidden_size, device=device)
-        if self.is_lstm:
-            c = torch.zeros(B, self.hidden_size, device=device)
-            hidden = (h, c)
-        else:
-            hidden = h
+        c = torch.zeros(B, self.hidden_size, device=device)
+        hidden = (h, c)
 
         # Начинаем с SOS токена
         targets = torch.full((B,), self.sos_id, dtype=torch.long, device=device)
@@ -232,12 +167,7 @@ class AttentionDecoder(nn.Module):
             
             # Attention step
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
-
-            # Extract h from hidden state
-            if self.is_lstm:
-                h_out = hidden[0]
-            else:
-                h_out = hidden
+            h_out = hidden[0]
 
             # Generate logits
             out = F.dropout(h_out, p=self.dropout_p, training=self.training)
@@ -284,11 +214,8 @@ class AttentionDecoder(nn.Module):
 
         # Инициализация
         h = torch.zeros(B, self.hidden_size, device=device)
-        if self.is_lstm:
-            c = torch.zeros(B, self.hidden_size, device=device)
-            hidden = (h, c)
-        else:
-            hidden = h
+        c = torch.zeros(B, self.hidden_size, device=device)
+        hidden = (h, c)
 
         out_hid = torch.zeros(B, steps, self.hidden_size, device=device)
         targets = text[:, 0]  # <SOS>
@@ -297,12 +224,7 @@ class AttentionDecoder(nn.Module):
             onehots = self._char_to_onehot(targets)
             hidden, _ = self.attention_cell(hidden, batch_H, onehots)
 
-            # Extract h from hidden state
-            if self.is_lstm:
-                h_out = hidden[0]
-            else:
-                h_out = hidden
-
+            h_out = hidden[0]
             out_hid[:, t, :] = h_out
 
             out = F.dropout(h_out, p=self.dropout_p, training=self.training)
@@ -330,19 +252,16 @@ class TRBAModel(nn.Module):
         num_classes: int,
         hidden_size: int = 256,
         num_encoder_layers: int = 2,
-        encoder_type: str = "LSTM",
-        decoder_type: str = "LSTM",
         img_h: int = 64,
         img_w: int = 256,
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
+        cnn_backbone: str = "seresnet31",
         sos_id: int = 1,
         eos_id: int = 2,
         pad_id: int = 0,
         blank_id: Optional[int] = 3,
         enc_dropout_p: float = 0.1,
-        dropblock_p: float = 0.0,
-        dropblock_block_size: int = 5,
         use_ctc_head: bool = True,
         use_attention_head: bool = True,
     ):
@@ -353,36 +272,32 @@ class TRBAModel(nn.Module):
         self.num_classes = num_classes
         self.hidden_size = hidden_size
         self.num_encoder_layers = num_encoder_layers
-        self.encoder_type = encoder_type.upper()
-        self.decoder_type = decoder_type.upper()
         self.img_h = img_h
         self.img_w = img_w
         self.use_ctc_head = use_ctc_head
         self.use_attention_head = use_attention_head
+        self.cnn_backbone = cnn_backbone.lower()
 
         # ===== CNN Encoder =====
-        self.cnn = SEResNet31(
+        backbone_cls = CNN_BACKBONES.get(self.cnn_backbone)
+        if backbone_cls is None:
+            available = ", ".join(sorted(CNN_BACKBONES))
+            raise ValueError(
+                f"Unsupported cnn_backbone '{cnn_backbone}'. Available: {available}"
+            )
+
+        self.cnn = backbone_cls(
             in_channels=cnn_in_channels,
             out_channels=cnn_out_channels,
-            dropblock_p=dropblock_p,
-            dropblock_block_size=dropblock_block_size,
         )
 
         # ===== BiRNN Encoder =====
         enc_dim = self.cnn.out_channels
 
-        # Choose encoder type
-        if self.encoder_type == "LSTM":
-            encoder_class = BidirectionalLSTM
-        elif self.encoder_type == "GRU":
-            encoder_class = BidirectionalGRU
-        else:
-            raise ValueError(f"encoder_type должен быть 'LSTM' или 'GRU', получен: {encoder_type}")
-
         encoder_layers = []
         for i in range(num_encoder_layers):
             input_dim = enc_dim if i == 0 else hidden_size
-            encoder_layers.append(encoder_class(input_dim, hidden_size, hidden_size))
+            encoder_layers.append(BidirectionalLSTM(input_dim, hidden_size, hidden_size))
         
         self.enc_rnn = nn.Sequential(*encoder_layers)
         self.enc_dropout = nn.Dropout(enc_dropout_p)
@@ -406,7 +321,6 @@ class TRBAModel(nn.Module):
                 blank_id=blank_id,
                 dropout_p=0.1,
                 sampling_prob=0.0,
-                decoder_type=self.decoder_type,
             )
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
@@ -424,23 +338,6 @@ class TRBAModel(nn.Module):
         f = self.enc_dropout(f)
         
         return f
-
-    def forward_ctc(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass для CTC декодирования.
-        
-        Args:
-            x: [B, 3, H, W] input images
-            
-        Returns:
-            ctc_logits: [B, W, num_classes] CTC логиты
-        """
-        assert self.use_ctc_head, "CTC head не включена"
-        
-        enc_output = self.encode(x)  # [B, W, hidden_size]
-        ctc_logits = self.ctc_head(enc_output)  # [B, W, num_classes]
-        
-        return ctc_logits
 
     def forward_attention(
         self,
@@ -510,37 +407,33 @@ class TRBAModel(nn.Module):
             text: [B, T] target tokens (только для обучения)
             is_train: режим обучения
             batch_max_length: максимальная длина последовательности
-            mode: "ctc" | "attention" | "both"
+            mode: "attention" | "both"
             onnx_mode: True для ONNX экспорта (всегда max_length шагов)
             
         Returns:
             dict с ключами в зависимости от mode:
-                "ctc_logits": [B, W, num_classes]
+                "ctc_logits": [B, W, num_classes] (??? mode="both")
                 "attention_logits": [B, T, num_classes]
                 "attention_preds": [B, T] (только inference)
         """
-        result = {}
-        
-        if mode == "ctc":
-            result["ctc_logits"] = self.forward_ctc(x)
-            
-        elif mode == "attention":
+        result: Dict[str, Any] = {}
+
+        if mode == "attention":
             logits, preds = self.forward_attention(
                 x, text, is_train, batch_max_length, onnx_mode
             )
             result["attention_logits"] = logits
             if preds is not None:
                 result["attention_preds"] = preds
-                
         elif mode == "both":
             enc_output = self.encode(x)
-            
+
             if self.use_ctc_head:
                 result["ctc_logits"] = self.ctc_head(enc_output)
-            
+
             if self.use_attention_head:
                 if is_train:
-                    assert text is not None, "text обязателен для обучения"
+                    assert text is not None, "text ???+???????'??>??? ???>?? ???+?????????"
                     logits = self.attention_decoder.forward_training(
                         enc_output, text, batch_max_length
                     )
@@ -552,8 +445,8 @@ class TRBAModel(nn.Module):
                     result["attention_logits"] = logits
                     result["attention_preds"] = preds
         else:
-            raise ValueError(f"mode должен быть 'ctc', 'attention' или 'both', получен: {mode}")
-        
+            raise ValueError(f"mode ?????>????? ?+?<?'?? 'attention' ??>?? 'both', ?????>??????: {mode}")
+
         return result
 
     def compute_ctc_loss(

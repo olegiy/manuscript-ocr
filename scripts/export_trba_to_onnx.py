@@ -1,21 +1,16 @@
 """
-Скрипт для экспорта модели TRBA V2 в формат ONNX.
+??????? ?????????? TRBA V2 ? ?????? ONNX.
 
-Model V2 уже ONNX-compatible из коробки!
-Поддерживает два режима:
-1. CTC - быстрый декодер
-2. Attention (greedy only) - точный декодер
+?????? ????????? ONNX-compatible ??? ?????????????? ??????.
+?????????????? ?????? Attention-??????? ? ?????? ??????????????.
 
 Usage:
-    # CTC экспорт
-    python scripts/export_trba_to_onnx.py --mode ctc --output trba_ctc.onnx
-    
-    # Attention экспорт  
     python scripts/export_trba_to_onnx.py --mode attention --output trba_attention.onnx
     
-    # С кастомными весами
+    # ?? ????????? ????? ? ???????
     python scripts/export_trba_to_onnx.py --weights path/to/weights.pth --config path/to/config.json
 """
+
 
 import argparse
 import sys
@@ -28,17 +23,6 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from manuscript.recognizers import TRBA
-
-
-class TRBACTCWrapper(nn.Module):
-    """Wrapper для CTC экспорта."""
-    
-    def __init__(self, trba_recognizer):
-        super().__init__()
-        self.model = trba_recognizer.model
-        
-    def forward(self, x):
-        return self.model.forward_ctc(x)
 
 
 class TRBAAttentionWrapper(nn.Module):
@@ -82,7 +66,7 @@ def export_trba_to_onnx(
     output_path : str
         Путь для сохранения ONNX модели
     mode : str
-        Режим экспорта: "ctc" или "attention"
+        ????? ???????? (?????????????? ?????? "attention")
     max_length : int, optional
         Максимальная длина для attention режима
     img_h : int
@@ -120,8 +104,6 @@ def export_trba_to_onnx(
     print(f"\nModel loaded successfully")
     print(f"  - Hidden size: {recognizer.hidden_size}")
     print(f"  - Num classes: {len(recognizer.itos)}")
-    print(f"  - Encoder type: {recognizer.encoder_type}")
-    print(f"  - Decoder type: {recognizer.decoder_type}")
     if mode == "attention":
         print(f"  - Max length: {max_length}")
     print(f"  - Device: CPU (required for ONNX export)")
@@ -343,7 +325,6 @@ def main():
     print(f"\nNote:")
     print(f"  - Model V2 is ONNX-compatible out of the box!")
     print(f"  - Beam search removed (only greedy for attention)")
-    print(f"  - Use --mode ctc for fast inference")
     print(f"  - Use --mode attention for better accuracy")
 
 

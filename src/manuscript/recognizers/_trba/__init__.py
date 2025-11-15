@@ -20,6 +20,46 @@ from .training.utils import load_checkpoint
 from .training.train import Config, run_training
 
 
+def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
+    """
+    CTC greedy декодирование с удалением повторов и blank токенов.
+    
+    Args:
+        logits: [B, W, num_classes] - CTC логиты
+        blank_id: ID blank токена (обычно 0)
+        
+    Returns:
+        decoded: [B, T] - декодированные последовательности (с паддингом -1)
+    """
+    # Greedy decode: берем argmax
+    preds = logits.argmax(dim=-1)  # [B, W]
+    
+    batch_size = preds.size(0)
+    decoded_batch = []
+    
+    for b in range(batch_size):
+        pred_seq = preds[b].tolist()  # [W]
+        
+        # CTC постобработка: удаляем повторы и blank
+        decoded = []
+        prev_token = None
+        for token in pred_seq:
+            if token != blank_id and token != prev_token:
+                decoded.append(token)
+            prev_token = token
+        
+        decoded_batch.append(decoded)
+    
+    # Паддинг до одинаковой длины
+    max_len = max(len(seq) for seq in decoded_batch) if decoded_batch else 1
+    padded = []
+    for seq in decoded_batch:
+        padded_seq = seq + [-1] * (max_len - len(seq))
+        padded.append(padded_seq)
+    
+    return torch.tensor(padded, dtype=torch.long, device=logits.device)
+
+
 class TRBA:
     _DEFAULT_PRESET_NAME = "exp_1_baseline"
     _DEFAULT_RELEASE_WEIGHTS_URL = (
@@ -148,17 +188,20 @@ class TRBA:
         self.max_length = config.get("max_len", 25)
         self.hidden_size = config.get("hidden_size", 256)
         self.num_encoder_layers = config.get("num_encoder_layers", 2)
-        self.encoder_type = config.get("encoder_type", "LSTM")
-        self.decoder_type = config.get("decoder_type", "LSTM")
         self.img_h = config.get("img_h", 64)
         self.img_w = config.get("img_w", 256)
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
         self.cnn_out_channels = config.get("cnn_out_channels", 512)
+        self.cnn_backbone = config.get("cnn_backbone", "seresnet31")
         
         # Decoder head configuration
         self.decoder_head = config.get("decoder_head", "attention")
-        self.use_ctc_head = self.decoder_head in ("ctc", "both")
-        self.use_attention_head = self.decoder_head in ("attention", "both")
+        if self.decoder_head not in ("attention", "both"):
+            raise ValueError(
+                f"decoder_head должен быть 'attention' или 'both', получен: {self.decoder_head}"
+            )
+        self.use_ctc_head = self.decoder_head == "both"
+        self.use_attention_head = True
         self.ctc_weight = config.get("ctc_weight", 0.3)
 
         if device == "auto":
@@ -258,12 +301,11 @@ class TRBA:
             num_classes=len(self.itos),
             hidden_size=self.hidden_size,
             num_encoder_layers=self.num_encoder_layers,
-            encoder_type=self.encoder_type,
-            decoder_type=self.decoder_type,
             img_h=self.img_h,
             img_w=self.img_w,
             cnn_in_channels=self.cnn_in_channels,
             cnn_out_channels=self.cnn_out_channels,
+            cnn_backbone=self.cnn_backbone,
             sos_id=self.sos_id,
             eos_id=self.eos_id,
             pad_id=self.pad_id,
@@ -331,11 +373,9 @@ class TRBA:
         batch_size : int, optional
             Number of images to process simultaneously. Larger batches are
             faster but require more memory. Default is 32.
-        mode : {"attention", "ctc"}, optional
-            Decoding mode:
-
-            - ``"attention"`` — Attention decoder (greedy, more accurate)
-            - ``"ctc"`` — CTC decoder (faster)
+        mode : {"attention"}, optional
+            Decoding mode. Independent CTC decoding is no longer supported,
+            so only the Attention decoder is available.
 
             Default is ``"attention"``.
 
@@ -358,16 +398,7 @@ class TRBA:
         >>> results = recognizer.predict("word_image.jpg")
         >>> print(f"Text: '{results[0]['text']}' (confidence: {results[0]['confidence']:.3f})")
 
-        Batch processing with CTC decoder (faster):
 
-        >>> image_paths = ["word1.jpg", "word2.jpg", "word3.jpg"]
-        >>> results = recognizer.predict(
-        ...     image_paths,
-        ...     batch_size=16,
-        ...     mode="ctc"
-        ... )
-        >>> for img_path, result in zip(image_paths, results):
-        ...     print(f"{img_path}: '{result['text']}' ({result['confidence']:.3f})")
 
         Process numpy arrays:
 
@@ -383,42 +414,33 @@ class TRBA:
         else:
             images_list = images
 
-        results = []
+        if mode != 'attention':
+            raise ValueError("predict() поддерживает только режим 'attention'.")
+
+        results: List[Dict[str, Any]] = []
 
         with torch.no_grad():
             for i in range(0, len(images_list), batch_size):
                 batch_images = images_list[i : i + batch_size]
 
-                # --- подготовка батча ---
                 batch_tensors = []
                 for img in batch_images:
                     tensor = self._preprocess_image(img)
                     batch_tensors.append(tensor.squeeze(0))
                 batch_tensor = torch.stack(batch_tensors).to(self.device)
-                
-                # --- инференс ---
+
                 result = self.model(
                     batch_tensor,
                     is_train=False,
                     batch_max_length=self.max_length,
-                    mode=mode,  # "attention" or "ctc"
+                    mode='attention',
                 )
-                
-                # Get predictions based on mode
-                if mode == "attention":
-                    logits = result["attention_logits"]
-                    pred_ids = result["attention_preds"]
-                elif mode == "ctc":
-                    logits = result["ctc_logits"]
-                    pred_ids = logits.argmax(dim=-1)  # [B, W] greedy decode
-                else:
-                    raise ValueError(f"Unknown mode: {mode}. Use 'attention' or 'ctc'.")
-
-                # --- вычисление вероятностей ---
-                probs = F.log_softmax(logits, dim=-1)  # [B, T, V]
+                logits = result['attention_logits']
+                pred_ids = result['attention_preds']
+                probs = F.log_softmax(logits, dim=-1)
 
                 for j, pred_row in enumerate(pred_ids):
-                    text = decode_tokens(
+                    decoded = decode_tokens(
                         pred_row,
                         self.itos,
                         pad_id=self.pad_id,
@@ -426,15 +448,14 @@ class TRBA:
                         blank_id=self.blank_id,
                     )
 
-                    # Confidence = среднее log-prob
-                    pred_row = pred_row.tolist()
-                    if len(pred_row) > 0:
-                        token_probs = probs[j, torch.arange(len(pred_row)), pred_row]
+                    seq = pred_row.tolist()
+                    if seq:
+                        token_probs = probs[j, torch.arange(len(seq)), seq]
                         confidence = token_probs.exp().mean().item()
                     else:
                         confidence = 0.0
 
-                    results.append({"text": text, "confidence": confidence})
+                    results.append({'text': decoded, 'confidence': confidence})
 
         return results
 
@@ -453,10 +474,9 @@ class TRBA:
         max_len: int = 25,
         hidden_size: int = 256,
         num_encoder_layers: int = 2,
-        encoder_type: str = "LSTM",
-        decoder_type: str = "LSTM",
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
+        cnn_backbone: str = "seresnet31",
         decoder_head: str = "attention",
         ctc_weight: float = 0.3,
         batch_size: int = 32,
@@ -466,18 +486,22 @@ class TRBA:
         scheduler: str = "ReduceLROnPlateau",
         weight_decay: float = 0.0,
         momentum: float = 0.9,
-        eval_every: int = 1,
+        val_interval: int = 1,
         val_size: int = 3000,
         train_proportions: Optional[Sequence[float]] = None,
         num_workers: int = 0,
         seed: int = 42,
-        resume_path: Optional[str] = None,
-        save_every: Optional[int] = None,
+        resume_from: Optional[str] = None,
+        save_interval: Optional[int] = None,
         device: str = "cuda",
         freeze_cnn: str = "none",
         freeze_enc_rnn: str = "none",
         freeze_attention: str = "none",
         pretrain_weights: Optional[object] = "default",
+        # Deprecated parameter aliases (backward compatibility)
+        eval_every: Optional[int] = None,
+        resume_path: Optional[str] = None,
+        save_every: Optional[int] = None,
         **extra_config: Any,
     ):
         """
@@ -516,23 +540,18 @@ class TRBA:
             Hidden dimension size for RNN encoder/decoder. Default is 256.
         num_encoder_layers : int, optional
             Number of Bidirectional LSTM layers in the encoder. Default is 2.
-        encoder_type : {"LSTM", "GRU"}, optional
-            Type of encoder RNN. "LSTM" uses BiLSTM (more expressive),
-            "GRU" uses BiGRU (faster, less memory). Default is ``"LSTM"``.
-        decoder_type : {"LSTM", "GRU"}, optional
-            Type of decoder RNN in attention mechanism. "LSTM" uses LSTMCell
-            (more expressive), "GRU" uses GRUCell (faster, less memory).
-            Default is ``"LSTM"``.
         cnn_in_channels : int, optional
             Number of input channels for CNN backbone (3 for RGB, 1 for grayscale). Default is 3.
         cnn_out_channels : int, optional
             Number of output channels from CNN backbone. Default is 512.
-        decoder_head : {"attention", "ctc", "both"}, optional
+        cnn_backbone : {"seresnet31", "seresnet31-lite"}, optional
+            CNN backbone variant. ``"seresnet31"`` keeps the standard SE-ResNet-31,
+            while ``"seresnet31-lite"`` enables a depthwise-lite version. Default is ``"seresnet31"``.
+        decoder_head : {"attention", "both"}, optional
             Which decoder head(s) to use during training:
 
             - ``"attention"`` — only Attention decoder (accurate, greedy only)
-            - ``"ctc"`` — only CTC decoder (fast)
-            - ``"both"`` — dual training with both heads (recommended)
+            - ``"both"`` — dual training with Attention + CTC heads
 
             Default is ``"attention"``.
         ctc_weight : float, optional
@@ -553,7 +572,7 @@ class TRBA:
             L2 weight decay coefficient. Default is 0.0.
         momentum : float, optional
             Momentum for SGD optimizer. Default is 0.9.
-        eval_every : int, optional
+        val_interval : int, optional
             Perform validation every N epochs. Default is 1.
         val_size : int, optional
             Maximum number of validation samples to use. Default is 3000.
@@ -565,9 +584,9 @@ class TRBA:
             Number of data loading workers. Default is 0.
         seed : int, optional
             Random seed for reproducibility. Default is 42.
-        resume_path : str or Path, optional
+        resume_from : str or Path, optional
             Path to checkpoint file to resume training from. Default is ``None``.
-        save_every : int, optional
+        save_interval : int, optional
             Save checkpoint every N epochs. If ``None``, only saves best model.
             Default is ``None``.
         device : {"cuda", "cpu"}, optional
@@ -636,7 +655,7 @@ class TRBA:
         >>> best_model = TRBA.train(
         ...     train_csvs="data/train.csv",
         ...     train_roots="data/train_images",
-        ...     resume_path="experiments/trba_exp1/checkpoints/last.pth",
+        ...     resume_from="experiments/trba_exp1/checkpoints/last.pth",
         ...     epochs=100,
         ... )
 
@@ -661,6 +680,38 @@ class TRBA:
         ...     epochs=100,
         ... )
         """
+        import warnings
+
+        # Handle deprecated parameter aliases for backward compatibility
+        if eval_every is not None:
+            warnings.warn(
+                "Parameter 'eval_every' is deprecated and will be removed in a future version. "
+                "Use 'val_interval' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            if val_interval == 1:  # Check if val_interval is still default
+                val_interval = eval_every
+        
+        if resume_path is not None:
+            warnings.warn(
+                "Parameter 'resume_path' is deprecated and will be removed in a future version. "
+                "Use 'resume_from' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            if resume_from is None:  # resume_from takes priority
+                resume_from = resume_path
+        
+        if save_every is not None:
+            warnings.warn(
+                "Parameter 'save_every' is deprecated and will be removed in a future version. "
+                "Use 'save_interval' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            if save_interval is None:  # save_interval takes priority
+                save_interval = save_every
 
         def _ensure_path_list(
             value: Optional[Union[str, Sequence[Optional[str]]]],
@@ -733,10 +784,9 @@ class TRBA:
             "max_len": max_len,
             "hidden_size": hidden_size,
             "num_encoder_layers": num_encoder_layers,
-            "encoder_type": encoder_type,
-            "decoder_type": decoder_type,
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
+            "cnn_backbone": cnn_backbone,
             "decoder_head": decoder_head,
             "ctc_weight": ctc_weight,
             "batch_size": batch_size,
@@ -746,7 +796,7 @@ class TRBA:
             "scheduler": scheduler,
             "weight_decay": weight_decay,
             "momentum": momentum,
-            "eval_every": eval_every,
+            "val_interval": val_interval,
             "val_size": val_size,
             "num_workers": num_workers,
             "seed": seed,
@@ -759,10 +809,10 @@ class TRBA:
             config_payload["val_roots"] = val_roots_list
         if train_proportions is not None:
             config_payload["train_proportions"] = list(train_proportions)
-        if resume_path is not None:
-            config_payload["resume_path"] = resume_path
-        if save_every is not None:
-            config_payload["save_every"] = save_every
+        if resume_from is not None:
+            config_payload["resume_from"] = resume_from
+        if save_interval is not None:
+            config_payload["save_interval"] = save_interval
         # Pretrained weights option:
         # - None/False/"none": skip
         # - "default"/True: use release weights

@@ -83,7 +83,6 @@ model = TRBAModel(
     num_classes=num_classes,
     hidden_size=128,
     num_encoder_layers=1,
-    encoder_type="GRU",
     img_h=img_h,
     img_w=img_w,
     sos_id=SOS,

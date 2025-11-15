@@ -1,5 +1,4 @@
 import torch.nn as nn
-from torchvision.ops import DropBlock2d
 
 
 class SELayer(nn.Module):
@@ -30,8 +29,6 @@ class SEBasicBlock(nn.Module):
         stride=1,
         downsample=None,
         reduction=16,
-        dropblock_p=0.0,
-        dropblock_block_size=5,
     ):
         super().__init__()
         self.conv1 = nn.Conv2d(
@@ -46,12 +43,6 @@ class SEBasicBlock(nn.Module):
         self.se = SELayer(planes, reduction)
         self.downsample = downsample
 
-        self.dropblock = (
-            DropBlock2d(p=dropblock_p, block_size=dropblock_block_size)
-            if dropblock_p > 0
-            else nn.Identity()
-        )
-
     def forward(self, x):
         identity = x
 
@@ -59,7 +50,6 @@ class SEBasicBlock(nn.Module):
         out = self.bn2(self.conv2(out))
 
         out = self.se(out)
-        out = self.dropblock(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -73,8 +63,6 @@ class SEResNet31(nn.Module):
         in_channels=3,
         out_channels=512,
         reduction=16,
-        dropblock_p=0.0,
-        dropblock_block_size=5,
     ):
         super().__init__()
         # stem
@@ -95,8 +83,6 @@ class SEResNet31(nn.Module):
             blocks=1,
             stride=2,
             reduction=reduction,
-            dropblock_p=dropblock_p,
-            dropblock_block_size=dropblock_block_size,
         )
         self.layer2 = self._make_layer(
             256,
@@ -104,8 +90,6 @@ class SEResNet31(nn.Module):
             blocks=2,
             stride=1,
             reduction=reduction,
-            dropblock_p=dropblock_p,
-            dropblock_block_size=dropblock_block_size,
         )
         self.layer3 = self._make_layer(
             256,
@@ -113,8 +97,6 @@ class SEResNet31(nn.Module):
             blocks=5,
             stride=2,
             reduction=reduction,
-            dropblock_p=dropblock_p,
-            dropblock_block_size=dropblock_block_size,
         )
         self.layer4 = self._make_layer(
             512,
@@ -122,8 +104,6 @@ class SEResNet31(nn.Module):
             blocks=3,
             stride=1,
             reduction=reduction,
-            dropblock_p=dropblock_p,
-            dropblock_block_size=dropblock_block_size,
         )
 
         self.conv_out = nn.Sequential(
@@ -144,8 +124,6 @@ class SEResNet31(nn.Module):
         blocks,
         stride=1,
         reduction=16,
-        dropblock_p=0.0,
-        dropblock_block_size=5,
     ):
         downsample = None
         if stride != 1 or inplanes != planes:
@@ -161,8 +139,6 @@ class SEResNet31(nn.Module):
                 stride,
                 downsample,
                 reduction,
-                dropblock_p=dropblock_p,
-                dropblock_block_size=dropblock_block_size,
             )
         ]
         for _ in range(1, blocks):
@@ -171,8 +147,6 @@ class SEResNet31(nn.Module):
                     planes,
                     planes,
                     reduction=reduction,
-                    dropblock_p=dropblock_p,
-                    dropblock_block_size=dropblock_block_size,
                 )
             )
         return nn.Sequential(*layers)

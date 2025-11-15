@@ -151,11 +151,20 @@ def load_pretrained_weights(
     src: str,
     map_location: Optional[str] = "auto",
     logger: Optional[Any] = None,
+    legacy_migration: bool = True,
 ) -> Dict[str, Any]:
     """
     Load pretrained weights into `model` from local path or URL.
     Robust to different checkpoint layouts and tensor prefixes.
     Only matching keys with identical shapes are loaded.
+    
+    Args:
+        model: Target model
+        src: Path or URL to weights
+        map_location: Device for loading
+        logger: Logger instance
+        legacy_migration: If True, automatically migrates legacy TRBA weights (attn.* -> attention_decoder.*)
+        
     Returns stats dict.
     """
     if map_location == "auto":
@@ -178,6 +187,23 @@ def load_pretrained_weights(
         return {"ok": False, "error": str(e), "src": src}
 
     raw_state = _extract_model_state(raw_obj)
+    
+    # Legacy migration: attn.* -> attention_decoder.*
+    if legacy_migration and any(k.startswith("attn.") for k in raw_state.keys()):
+        if logger:
+            logger.info("Detected legacy TRBA weights (attn.*), applying migration to attention_decoder.*")
+        else:
+            print("[pretrain] Migrating legacy TRBA weights...")
+        
+        migrated_state = {}
+        for k, v in raw_state.items():
+            if k.startswith("attn."):
+                new_key = k.replace("attn.", "attention_decoder.", 1)
+                migrated_state[new_key] = v
+            else:
+                migrated_state[k] = v
+        raw_state = migrated_state
+    
     filt_state, stats = build_compatible_state_dict(model, raw_state)
 
     missing_after = set(model.state_dict().keys()) - set(filt_state.keys())

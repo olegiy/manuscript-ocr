@@ -38,6 +38,85 @@ from .utils import (
 
 
 # -------------------------
+# CTC Decoding
+# -------------------------
+def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
+    """
+    CTC greedy декодирование с удалением повторов и blank токенов.
+    
+    Args:
+        logits: [B, W, num_classes] - CTC логиты
+        blank_id: ID blank токена (обычно 0)
+        
+    Returns:
+        decoded: [B, T] - декодированные последовательности (с паддингом -1)
+    """
+    # Greedy decode: берем argmax
+    preds = logits.argmax(dim=-1)  # [B, W]
+    
+    batch_size = preds.size(0)
+    decoded_batch = []
+    
+    for b in range(batch_size):
+        pred_seq = preds[b].tolist()  # [W]
+        
+        # CTC постобработка: удаляем повторы и blank
+        decoded = []
+        prev_token = None
+        for token in pred_seq:
+            if token != blank_id and token != prev_token:
+                decoded.append(token)
+            prev_token = token
+        
+        decoded_batch.append(decoded)
+    
+    # Паддинг до одинаковой длины
+    max_len = max(len(seq) for seq in decoded_batch) if decoded_batch else 1
+    padded = []
+    for seq in decoded_batch:
+        padded_seq = seq + [-1] * (max_len - len(seq))
+        padded.append(padded_seq)
+    
+    return torch.tensor(padded, dtype=torch.long, device=logits.device)
+
+
+def get_ctc_weight_for_epoch(
+    epoch: int, 
+    initial_weight: float = 0.3, 
+    decay_epochs: int = 50,
+    min_weight: float = 0.0
+) -> float:
+    """
+    Вычисляет вес CTC для текущей эпохи с затуханием.
+    
+    CTC помогает на ранних стадиях обучения, затем его влияние уменьшается,
+    чтобы attention decoder доминировал для лучшего качества.
+    
+    Args:
+        epoch: Текущая эпоха (1-indexed)
+        initial_weight: Начальный вес CTC (например 0.3)
+        decay_epochs: За сколько эпох затухает до min_weight
+        min_weight: Минимальный вес (обычно 0.0 - полное затухание)
+        
+    Returns:
+        Текущий вес CTC для использования в loss
+        
+    Example:
+        epoch 1:  0.30
+        epoch 25: 0.15
+        epoch 50: 0.00 (полностью затух)
+    """
+    if decay_epochs <= 0:
+        return initial_weight
+    
+    # Линейное затухание
+    progress = min(1.0, (epoch - 1) / decay_epochs)
+    current_weight = initial_weight * (1 - progress) + min_weight * progress
+    
+    return max(min_weight, current_weight)
+
+
+# -------------------------
 # logging
 # -------------------------
 def setup_logger(exp_dir: str) -> logging.Logger:
@@ -101,7 +180,11 @@ class Config:
         return getattr(self, key)
 
     def _maybe_apply_resume(self, user_data: dict) -> dict:
-        resume_path = user_data.get("resume_path")
+        # Support both new "resume_from" and legacy "resume_path" parameters
+        resume_path = user_data.get("resume_from")
+        if resume_path is None:
+            resume_path = user_data.get("resume_path")
+        
         if not resume_path:
             return dict(user_data)
 
@@ -149,7 +232,9 @@ class Config:
             if value is not None:
                 merged[key] = value
 
-        merged["resume_path"] = str(resume_ckpt)
+        # Store checkpoint path with both new and legacy keys for compatibility
+        merged["resume_from"] = str(resume_ckpt)
+        merged["resume_path"] = str(resume_ckpt)  # Legacy compatibility
         merged["exp_dir"] = str(resume_dir)
         return merged
 
@@ -317,7 +402,8 @@ def visualize_predictions_tensorboard(
                 pred_ids = result["attention_preds"][0]
             else:  # ctc
                 ctc_logits = result["ctc_logits"]
-                pred_ids = ctc_logits.argmax(dim=-1)[0]
+                # CTC декодирование с постобработкой
+                pred_ids = ctc_greedy_decode(ctc_logits, blank_id=blank_id)[0]
                 
             pred_text = decode_tokens(
                 pred_ids.cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
@@ -436,30 +522,64 @@ def run_training(cfg: Config, device: str = "cuda"):
     weight_decay = getattr(cfg, "weight_decay", 0.0)
     momentum = getattr(cfg, "momentum", 0.9)
 
-    # прочее
-    resume_path = getattr(cfg, "resume_path", None)
-    eval_every = getattr(cfg, "eval_every", getattr(cfg, "save_every", 1))
+    # Resume checkpoint handling (supports both new and legacy parameter names)
+    resume_from = getattr(cfg, "resume_from", None)
+    if resume_from is None:
+        # Fallback to legacy parameter name for backward compatibility
+        resume_from = getattr(cfg, "resume_path", None)
+    
+    # Автоматический поиск последнего чекпоинта в exp_dir
+    if not resume_from:
+        possible_checkpoints = []
+        if os.path.exists(exp_dir):
+            for fname in ["checkpoint_last.pth", "checkpoint_best.pth"]:
+                ckpt_path = os.path.join(exp_dir, fname)
+                if os.path.isfile(ckpt_path):
+                    possible_checkpoints.append(ckpt_path)
+        
+        if possible_checkpoints:
+            # Предпочитаем checkpoint_last.pth для продолжения обучения
+            if os.path.join(exp_dir, "checkpoint_last.pth") in possible_checkpoints:
+                resume_from = os.path.join(exp_dir, "checkpoint_last.pth")
+            else:
+                resume_from = possible_checkpoints[0]
+            logger.info(f"Автоматически найден чекпоинт для продолжения: {resume_from}")
+    
+    # Validation interval handling (supports both new and legacy parameter names)
+    val_interval = getattr(cfg, "val_interval", None)
+    if val_interval is None:
+        # Fallback to legacy parameter names for backward compatibility
+        val_interval = getattr(cfg, "eval_every", getattr(cfg, "save_every", 1))
     try:
-        eval_every = int(eval_every)
+        val_interval = int(val_interval)
     except (TypeError, ValueError):
-        raise ValueError("eval_every must be a positive integer")
-    if eval_every < 1:
-        raise ValueError("eval_every must be >= 1")
+        raise ValueError("val_interval must be a positive integer")
+    if val_interval < 1:
+        raise ValueError("val_interval must be >= 1")
+    
+    # Save interval handling (supports both new and legacy parameter names)
+    save_interval = getattr(cfg, "save_interval", None)
+    if save_interval is None:
+        # Fallback to legacy parameter name for backward compatibility
+        save_interval = getattr(cfg, "save_every", None)
+    
     train_proportions = getattr(cfg, "train_proportions", None)
     val_size = getattr(cfg, "val_size", 3000)
     num_workers = getattr(cfg, "num_workers", 0)
     
-    # Decoder head selection: "ctc" | "attention" | "both"
+    # Decoder head selection: "attention" | "both"
     decoder_head = getattr(cfg, "decoder_head", "attention")
-    if decoder_head not in ("ctc", "attention", "both"):
-        raise ValueError(f"decoder_head должен быть 'ctc', 'attention' или 'both', получен: {decoder_head}")
+    if decoder_head not in ("attention", "both"):
+        raise ValueError(f"decoder_head должен быть 'attention' или 'both', получен: {decoder_head}")
     
     # CTC loss weight (используется только при decoder_head="both")
-    ctc_weight = getattr(cfg, "ctc_weight", 0.3)
+    ctc_weight_initial = getattr(cfg, "ctc_weight", 0.3)
+    ctc_weight_decay_epochs = getattr(cfg, "ctc_weight_decay_epochs", 0)  # 0 = без затухания
+    ctc_weight_min = getattr(cfg, "ctc_weight_min", 0.0)  # Минимальный вес после затухания
 
     # --- директории и TensorBoard ---
-    if resume_path:
-        exp_dir = os.path.dirname(resume_path)
+    if resume_from:
+        exp_dir = os.path.dirname(resume_from)
         os.makedirs(exp_dir, exist_ok=True)
         logger = setup_logger(exp_dir)
 
@@ -505,25 +625,23 @@ def run_training(cfg: Config, device: str = "cuda"):
 
     # --- модель ---
     num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
-    encoder_type = getattr(cfg, "encoder_type", "LSTM")
-    decoder_type = getattr(cfg, "decoder_type", "LSTM")
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
+    cnn_backbone = getattr(cfg, "cnn_backbone", "seresnet31")
     
     # decoder_head и ctc_weight уже определены выше
-    use_ctc_head = decoder_head in ("ctc", "both")
-    use_attention_head = decoder_head in ("attention", "both")
+    use_ctc_head = decoder_head == "both"
+    use_attention_head = True
 
     model = TRBAModel(
         num_classes=num_classes,
         hidden_size=hidden_size,
         num_encoder_layers=num_encoder_layers,
-        encoder_type=encoder_type,
-        decoder_type=decoder_type,
         img_h=img_h,
         img_w=img_w,
         cnn_in_channels=cnn_in_channels,
         cnn_out_channels=cnn_out_channels,
+        cnn_backbone=cnn_backbone,
         sos_id=SOS,
         eos_id=EOS,
         pad_id=PAD,
@@ -535,9 +653,14 @@ def run_training(cfg: Config, device: str = "cuda"):
     # --- optional pretrained weights ---
     # pretrain_weights: None/False/"none" to skip; "default"/True to use release;
     # or a string path/URL to weights/checkpoint file.
+    # NOTE: pretrain_weights игнорируется если есть resume_from (продолжение обучения)
     pretrain_src = getattr(cfg, "pretrain_weights", "default")
-    resume_path = getattr(cfg, "resume_path", None)
-    if not resume_path:
+    original_resume_from = getattr(cfg, "resume_from", None)
+    if original_resume_from is None:
+        # Fallback to legacy parameter name for backward compatibility
+        original_resume_from = getattr(cfg, "resume_path", None)
+    
+    if not resume_from:  # resume_from может быть найден автоматически
 
         def _normalize_pretrain(v) -> str:
             if v is True:
@@ -572,6 +695,10 @@ def run_training(cfg: Config, device: str = "cuda"):
                 logger.warning(
                     f"Pretrained load failed from {pretrain_src}. Proceeding with random init."
                 )
+    else:
+        logger.info(
+            f"Пропуск загрузки pretrain_weights - найден чекпоинт для продолжения: {resume_from}"
+        )
 
     # --- политика заморозки весов ---
     def _normalize_policy(v: Optional[str]) -> str:
@@ -905,10 +1032,10 @@ def run_training(cfg: Config, device: str = "cuda"):
     global_step = 0
     best_val_loss, best_val_acc = float("inf"), -1.0
 
-    if resume_path and os.path.isfile(resume_path):
+    if resume_from and os.path.isfile(resume_from):
         try:
             ckpt = load_checkpoint(
-                resume_path,
+                resume_from,
                 model,
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -920,18 +1047,30 @@ def run_training(cfg: Config, device: str = "cuda"):
                 f"Will load model weights only and continue."
             )
             ckpt = load_checkpoint(
-                resume_path, model, optimizer=None, scheduler=None, scaler=None
+                resume_from, model, optimizer=None, scheduler=None, scaler=None
             )
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         global_step = int(ckpt.get("global_step", 0))
         best_val_loss = float(ckpt.get("best_val_loss", best_val_loss))
         best_val_acc = float(ckpt.get("best_val_acc", best_val_acc))
         logger.info(
-            f"Resumed from: {resume_path} (epoch={start_epoch-1}, step={global_step})"
+            f"Resumed from: {resume_from} (epoch={start_epoch-1}, step={global_step})"
         )
 
     # --- training loop ---
     for epoch in range(start_epoch, epochs + 1):
+        # Вычисляем текущий CTC weight с затуханием (только для decoder_head="both")
+        if decoder_head == "both":
+            ctc_weight = get_ctc_weight_for_epoch(
+                epoch, 
+                initial_weight=ctc_weight_initial,
+                decay_epochs=ctc_weight_decay_epochs,
+                min_weight=ctc_weight_min
+            )
+            logger.info(f"Epoch {epoch}: CTC weight = {ctc_weight:.4f}")
+        else:
+            ctc_weight = ctc_weight_initial  # Не используется, но для совместимости
+        
         # train
         model.train()
         total_train_loss = 0.0
@@ -952,7 +1091,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     text=text_in, 
                     is_train=True, 
                     batch_max_length=max_len,
-                    mode=decoder_head  # "ctc", "attention", or "both"
+                    mode=decoder_head  # "attention" или "both"
                 )
                 
                 # Compute loss based on decoder_head
@@ -968,12 +1107,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                         target_y.reshape(-1)
                     )
                     loss = attn_loss_val
-                    
-                elif decoder_head == "ctc":
-                    # Pure CTC mode
-                    ctc_logits = result["ctc_logits"]
-                    ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
-                    loss = ctc_loss_val
                     
                 elif decoder_head == "both":
                     # Dual loss mode
@@ -1017,7 +1150,7 @@ def run_training(cfg: Config, device: str = "cuda"):
         avg_attn_loss = total_attn_loss / max(1, len(train_loader))
         avg_ctc_loss = total_ctc_loss / max(1, len(train_loader))
 
-        should_eval = ((epoch - start_epoch) % eval_every == 0) or (epoch == epochs)
+        should_eval = ((epoch - start_epoch) % val_interval == 0) or (epoch == epochs)
 
         avg_val_loss = None
         val_acc = None
@@ -1038,16 +1171,9 @@ def run_training(cfg: Config, device: str = "cuda"):
             total_samples = 0
 
             # Validation modes based on decoder_head
-            eval_modes = {}
-            
-            if decoder_head == "attention":
-                eval_modes["attention"] = {"mode": "attention"}
-            elif decoder_head == "ctc":
-                eval_modes["ctc"] = {"mode": "ctc"}
-            elif decoder_head == "both":
-                # Validate both heads separately
-                eval_modes["attention"] = {"mode": "attention"}
-                eval_modes["ctc"] = {"mode": "ctc"}
+            eval_modes = {"attention": {"mode": "attention", "decoder": "attention"}}
+            if decoder_head == "both":
+                eval_modes["ctc"] = {"mode": "both", "decoder": "ctc"}
 
             aggregate_mode_stats = {
                 mode_name: {
@@ -1090,16 +1216,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                                     logits_tf.reshape(-1, logits_tf.size(-1)),
                                     target_y.reshape(-1),
                                 )
-                            elif decoder_head == "ctc":
-                                result = model(
-                                    imgs,
-                                    text=text_in,
-                                    is_train=True,
-                                    batch_max_length=max_len,
-                                    mode="ctc"
-                                )
-                                ctc_logits = result["ctc_logits"]
-                                val_loss = model.compute_ctc_loss(ctc_logits, target_y, lengths)
                             else:  # both
                                 result = model(
                                     imgs,
@@ -1128,13 +1244,12 @@ def run_training(cfg: Config, device: str = "cuda"):
                                 batch_max_length=max_len,
                                 mode=mode_cfg["mode"],
                             )
-                            # Get predictions based on mode
-                            if mode_cfg["mode"] == "attention":
+                            decoder_type = mode_cfg["decoder"]
+                            if decoder_type == "attention":
                                 pred_ids = result["attention_preds"]
-                            else:  # ctc
-                                # CTC greedy decode
+                            else:
                                 ctc_logits = result["ctc_logits"]
-                                pred_ids = ctc_logits.argmax(dim=-1)  # [B, W]
+                                pred_ids = ctc_greedy_decode(ctc_logits, blank_id=BLANK)
                             preds_batch[mode_name] = pred_ids.cpu()
 
                         tgt_ids = target_y.cpu()
@@ -1271,7 +1386,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     )
         else:
             logger.info(
-                f"Epoch {epoch:03d}: skipping validation (eval_every={eval_every})"
+                f"Epoch {epoch:03d}: skipping validation (val_interval={val_interval})"
             )
 
         with open(metrics_csv_path, "a", newline="", encoding="utf-8") as f:
@@ -1332,7 +1447,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                     ]
                 )
         else:
-            msg_parts.append(f"val=skipped (eval_every={eval_every})")
+            msg_parts.append(f"val=skipped (val_interval={val_interval})")
         msg_parts.append(f"lr={optimizer.param_groups[0]['lr']:.2e}")
         msg = " | ".join(msg_parts)
         print(msg)
@@ -1365,10 +1480,9 @@ def run_training(cfg: Config, device: str = "cuda"):
                     "max_len": max_len,
                     "hidden_size": hidden_size,
                     "num_encoder_layers": num_encoder_layers,
-                    "encoder_type": encoder_type,
-                    "decoder_type": decoder_type,
                     "cnn_in_channels": cnn_in_channels,
                     "cnn_out_channels": cnn_out_channels,
+                    "cnn_backbone": cnn_backbone,
                     "decoder_head": decoder_head,
                     "ctc_weight": ctc_weight,
                     "charset_path": charset_path,
@@ -1409,10 +1523,9 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "max_len": max_len,
                         "hidden_size": hidden_size,
                         "num_encoder_layers": num_encoder_layers,
-                        "encoder_type": encoder_type,
-                        "decoder_type": decoder_type,
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
+                        "cnn_backbone": cnn_backbone,
                         "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
@@ -1454,10 +1567,9 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "max_len": max_len,
                         "hidden_size": hidden_size,
                         "num_encoder_layers": num_encoder_layers,
-                        "encoder_type": encoder_type,
-                        "decoder_type": decoder_type,
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
+                        "cnn_backbone": cnn_backbone,
                         "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
