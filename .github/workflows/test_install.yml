@@ -2,9 +2,7 @@ name: Test package installation
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
   test-user-installation:
@@ -14,10 +12,10 @@ jobs:
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -44,37 +42,28 @@ jobs:
         python-version: ["3.9", "3.10", "3.11"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Install base package dependencies
-        run: |
-          pip install -r requirements.txt
+      - name: Install package with development extras (editable)
+        run: pip install -e ".[dev]"
 
       - name: Install GPU PyTorch (override CPU version)
         run: |
           pip install --extra-index-url https://download.pytorch.org/whl/cu118 torch torchvision torchaudio --upgrade
 
-      - name: Install development tools
-        run: |
-          pip install pytest>=7.0.0 pytest-cov>=4.0.0 black>=22.0.0 flake8>=5.0.0 isort>=5.10.0 mypy>=0.991
-          pip install sphinx>=5.0.0 sphinx-rtd-theme>=1.0.0 build>=0.8.0 twine>=4.0.0
-
-      - name: Install package in editable mode
-        run: pip install -e .
-
       - name: Check for dependency conflicts
         run: pip check
 
       - name: Run all tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v --cov=src --cov-report=xml
 
       - name: Run code quality checks
         run: |
