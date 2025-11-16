@@ -9,13 +9,21 @@
 
 ## Установка
 
+### 🚀 Базовая установка (ONNX inference, без PyTorch)
+
+Минимальная установка для использования готовых моделей через ONNX Runtime:
+
 ```bash
 pip install manuscript-ocr
 ```
 
 Для GPU поддержки:
 ```bash
+# Сначала установите PyTorch с CUDA
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# Затем установите manuscript-ocr
+pip install manuscript-ocr[dev]
 ```
 
 ---
