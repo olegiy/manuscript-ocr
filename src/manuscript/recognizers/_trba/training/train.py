@@ -43,23 +43,23 @@ from .utils import (
 def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
     """
     CTC greedy декодирование с удалением повторов и blank токенов.
-    
+
     Args:
         logits: [B, W, num_classes] - CTC логиты
         blank_id: ID blank токена (обычно 0)
-        
+
     Returns:
         decoded: [B, T] - декодированные последовательности (с паддингом -1)
     """
     # Greedy decode: берем argmax
     preds = logits.argmax(dim=-1)  # [B, W]
-    
+
     batch_size = preds.size(0)
     decoded_batch = []
-    
+
     for b in range(batch_size):
         pred_seq = preds[b].tolist()  # [W]
-        
+
         # CTC постобработка: удаляем повторы и blank
         decoded = []
         prev_token = None
@@ -67,40 +67,40 @@ def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
             if token != blank_id and token != prev_token:
                 decoded.append(token)
             prev_token = token
-        
+
         decoded_batch.append(decoded)
-    
+
     # Паддинг до одинаковой длины
     max_len = max(len(seq) for seq in decoded_batch) if decoded_batch else 1
     padded = []
     for seq in decoded_batch:
         padded_seq = seq + [-1] * (max_len - len(seq))
         padded.append(padded_seq)
-    
+
     return torch.tensor(padded, dtype=torch.long, device=logits.device)
 
 
 def get_ctc_weight_for_epoch(
-    epoch: int, 
-    initial_weight: float = 0.3, 
+    epoch: int,
+    initial_weight: float = 0.3,
     decay_epochs: int = 50,
-    min_weight: float = 0.0
+    min_weight: float = 0.0,
 ) -> float:
     """
     Вычисляет вес CTC для текущей эпохи с затуханием.
-    
+
     CTC помогает на ранних стадиях обучения, затем его влияние уменьшается,
     чтобы attention decoder доминировал для лучшего качества.
-    
+
     Args:
         epoch: Текущая эпоха (1-indexed)
         initial_weight: Начальный вес CTC (например 0.3)
         decay_epochs: За сколько эпох затухает до min_weight
         min_weight: Минимальный вес (обычно 0.0 - полное затухание)
-        
+
     Returns:
         Текущий вес CTC для использования в loss
-        
+
     Example:
         epoch 1:  0.30
         epoch 25: 0.15
@@ -108,11 +108,11 @@ def get_ctc_weight_for_epoch(
     """
     if decay_epochs <= 0:
         return initial_weight
-    
+
     # Линейное затухание
     progress = min(1.0, (epoch - 1) / decay_epochs)
     current_weight = initial_weight * (1 - progress) + min_weight * progress
-    
+
     return max(min_weight, current_weight)
 
 
@@ -180,11 +180,8 @@ class Config:
         return getattr(self, key)
 
     def _maybe_apply_resume(self, user_data: dict) -> dict:
-        # Support both new "resume_from" and legacy "resume_path" parameters
         resume_path = user_data.get("resume_from")
-        if resume_path is None:
-            resume_path = user_data.get("resume_path")
-        
+
         if not resume_path:
             return dict(user_data)
 
@@ -232,9 +229,8 @@ class Config:
             if value is not None:
                 merged[key] = value
 
-        # Store checkpoint path with both new and legacy keys for compatibility
+        # Store checkpoint path
         merged["resume_from"] = str(resume_ckpt)
-        merged["resume_path"] = str(resume_ckpt)  # Legacy compatibility
         merged["exp_dir"] = str(resume_dir)
         return merged
 
@@ -377,9 +373,9 @@ def visualize_predictions_tensorboard(
     # Настройка декодирования
     # mode теперь должен быть "ctc" или "attention"
     forward_kwargs = {
-        "is_train": False, 
+        "is_train": False,
         "batch_max_length": max_len,
-        "mode": mode  # "ctc" or "attention"
+        "mode": mode,  # "ctc" or "attention"
     }
 
     # Обрабатываем примеры
@@ -396,7 +392,7 @@ def visualize_predictions_tensorboard(
 
             # Prediction
             result = model(img_device, **forward_kwargs)
-            
+
             # Get predictions based on mode
             if mode == "attention":
                 pred_ids = result["attention_preds"][0]
@@ -404,7 +400,7 @@ def visualize_predictions_tensorboard(
                 ctc_logits = result["ctc_logits"]
                 # CTC декодирование с постобработкой
                 pred_ids = ctc_greedy_decode(ctc_logits, blank_id=blank_id)[0]
-                
+
             pred_text = decode_tokens(
                 pred_ids.cpu(), itos, pad_id=pad_id, eos_id=eos_id, blank_id=blank_id
             )
@@ -469,10 +465,6 @@ def visualize_predictions_tensorboard(
     tag = f"Predictions/{mode}"
     if epoch is not None:
         writer.add_image(tag, grid, epoch)
-        if logger:
-            logger.info(
-                f"Визуализация {len(images_with_text)} примеров ({mode}) в TensorBoard"
-            )
 
 
 def run_training(cfg: Config, device: str = "cuda"):
@@ -517,17 +509,14 @@ def run_training(cfg: Config, device: str = "cuda"):
     batch_size = getattr(cfg, "batch_size", 32)
     epochs = getattr(cfg, "epochs", 20)
     lr = getattr(cfg, "lr", 1e-3)
-    optimizer_name = getattr(cfg, "optimizer", "Adam")
-    scheduler_name = getattr(cfg, "scheduler", "ReduceLROnPlateau")
+    optimizer_name = getattr(cfg, "optimizer", "AdamW")
+    scheduler_name = getattr(cfg, "scheduler", "OneCycleLR")
     weight_decay = getattr(cfg, "weight_decay", 0.0)
     momentum = getattr(cfg, "momentum", 0.9)
 
-    # Resume checkpoint handling (supports both new and legacy parameter names)
+    # Resume checkpoint handling
     resume_from = getattr(cfg, "resume_from", None)
-    if resume_from is None:
-        # Fallback to legacy parameter name for backward compatibility
-        resume_from = getattr(cfg, "resume_path", None)
-    
+
     # Автоматический поиск последнего чекпоинта в exp_dir
     if not resume_from:
         possible_checkpoints = []
@@ -536,7 +525,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                 ckpt_path = os.path.join(exp_dir, fname)
                 if os.path.isfile(ckpt_path):
                     possible_checkpoints.append(ckpt_path)
-        
+
         if possible_checkpoints:
             # Предпочитаем checkpoint_last.pth для продолжения обучения
             if os.path.join(exp_dir, "checkpoint_last.pth") in possible_checkpoints:
@@ -544,38 +533,38 @@ def run_training(cfg: Config, device: str = "cuda"):
             else:
                 resume_from = possible_checkpoints[0]
             logger.info(f"Автоматически найден чекпоинт для продолжения: {resume_from}")
-    
-    # Validation interval handling (supports both new and legacy parameter names)
-    val_interval = getattr(cfg, "val_interval", None)
-    if val_interval is None:
-        # Fallback to legacy parameter names for backward compatibility
-        val_interval = getattr(cfg, "eval_every", getattr(cfg, "save_every", 1))
+
+    # Validation interval
+    val_interval = getattr(cfg, "val_interval", 1)
     try:
         val_interval = int(val_interval)
     except (TypeError, ValueError):
         raise ValueError("val_interval must be a positive integer")
     if val_interval < 1:
         raise ValueError("val_interval must be >= 1")
-    
-    # Save interval handling (supports both new and legacy parameter names)
+
+    # Save interval (не используется, всегда сохраняем при валидации)
     save_interval = getattr(cfg, "save_interval", None)
-    if save_interval is None:
-        # Fallback to legacy parameter name for backward compatibility
-        save_interval = getattr(cfg, "save_every", None)
-    
+
     train_proportions = getattr(cfg, "train_proportions", None)
     val_size = getattr(cfg, "val_size", 3000)
     num_workers = getattr(cfg, "num_workers", 0)
-    
-    # Decoder head selection: "attention" | "both"
-    decoder_head = getattr(cfg, "decoder_head", "attention")
-    if decoder_head not in ("attention", "both"):
-        raise ValueError(f"decoder_head должен быть 'attention' или 'both', получен: {decoder_head}")
-    
-    # CTC loss weight (используется только при decoder_head="both")
+
+    # CTC всегда используется при обучении для стабилизации
+    # При инференсе используется только attention decoder
+    decoder_head = "both"  # Фиксированное значение
+
+    # CTC loss weight для стабилизации начального обучения
     ctc_weight_initial = getattr(cfg, "ctc_weight", 0.3)
-    ctc_weight_decay_epochs = getattr(cfg, "ctc_weight_decay_epochs", 0)  # 0 = без затухания
-    ctc_weight_min = getattr(cfg, "ctc_weight_min", 0.0)  # Минимальный вес после затухания
+    ctc_weight_decay_epochs = getattr(
+        cfg, "ctc_weight_decay_epochs", 50
+    )  # Затухание за 50 эпох
+    ctc_weight_min = getattr(
+        cfg, "ctc_weight_min", 0.0
+    )  # Полное затухание после decay_epochs
+
+    # Gradient clipping для защиты от взрыва градиентов
+    max_grad_norm = getattr(cfg, "max_grad_norm", 5.0)
 
     # --- директории и TensorBoard ---
     if resume_from:
@@ -597,12 +586,8 @@ def run_training(cfg: Config, device: str = "cuda"):
             "val_acc",
             "val_cer",
             "val_wer",
+            "lr",
         ]
-        # Add secondary metrics columns if using both decoder heads
-        if decoder_head == "both":
-            # Will add attention/ctc specific columns
-            header.extend(["val_acc_secondary", "val_cer_secondary", "val_wer_secondary"])
-        header.append("lr")
         with open(metrics_csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(header)
@@ -628,7 +613,7 @@ def run_training(cfg: Config, device: str = "cuda"):
     cnn_in_channels = getattr(cfg, "cnn_in_channels", 3)
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
     cnn_backbone = getattr(cfg, "cnn_backbone", "seresnet31")
-    
+
     # decoder_head и ctc_weight уже определены выше
     use_ctc_head = decoder_head == "both"
     use_attention_head = True
@@ -650,16 +635,8 @@ def run_training(cfg: Config, device: str = "cuda"):
         use_attention_head=use_attention_head,
     ).to(device)
 
-    # --- optional pretrained weights ---
-    # pretrain_weights: None/False/"none" to skip; "default"/True to use release;
-    # or a string path/URL to weights/checkpoint file.
-    # NOTE: pretrain_weights игнорируется если есть resume_from (продолжение обучения)
     pretrain_src = getattr(cfg, "pretrain_weights", "default")
-    original_resume_from = getattr(cfg, "resume_from", None)
-    if original_resume_from is None:
-        # Fallback to legacy parameter name for backward compatibility
-        original_resume_from = getattr(cfg, "resume_path", None)
-    
+
     if not resume_from:  # resume_from может быть найден автоматически
 
         def _normalize_pretrain(v) -> str:
@@ -842,16 +819,9 @@ def run_training(cfg: Config, device: str = "cuda"):
         raise ValueError(f"Unknown optimizer: {optimizer_name}")
 
     # --- scheduler ---
-    if scheduler_name == "ReduceLROnPlateau":
-        scheduler = ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-7
-        )
-    elif scheduler_name == "CosineAnnealingLR":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    elif scheduler_name in ("None", None):
-        scheduler = None
-    else:
-        raise ValueError(f"Unknown scheduler: {scheduler_name}")
+    # Для OneCycleLR нужно знать total_steps, поэтому создадим scheduler после создания loader
+    scheduler = None
+    scheduler_name_for_later = scheduler_name
 
     scaler = amp.GradScaler()
 
@@ -1027,6 +997,31 @@ def run_training(cfg: Config, device: str = "cuda"):
     print(msg_ld)
     logger.info(msg_ld)
 
+    # --- создаем scheduler после train_loader ---
+    if scheduler_name_for_later == "ReduceLROnPlateau":
+        scheduler = ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-7
+        )
+    elif scheduler_name_for_later == "CosineAnnealingLR":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    elif scheduler_name_for_later == "OneCycleLR":
+        total_steps = len(train_loader) * epochs
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=lr * 3,
+            total_steps=total_steps,
+            pct_start=0.1,
+            anneal_strategy="cos",
+            cycle_momentum=False,
+        )
+        logger.info(
+            f"OneCycleLR: max_lr={lr * 3:.6f}, total_steps={total_steps}, pct_start=0.1"
+        )
+    elif scheduler_name_for_later in ("None", None, ""):
+        scheduler = None
+    else:
+        raise ValueError(f"Unknown scheduler: {scheduler_name_for_later}")
+
     # --- resume ---
     start_epoch = 1
     global_step = 0
@@ -1062,15 +1057,14 @@ def run_training(cfg: Config, device: str = "cuda"):
         # Вычисляем текущий CTC weight с затуханием (только для decoder_head="both")
         if decoder_head == "both":
             ctc_weight = get_ctc_weight_for_epoch(
-                epoch, 
+                epoch,
                 initial_weight=ctc_weight_initial,
                 decay_epochs=ctc_weight_decay_epochs,
-                min_weight=ctc_weight_min
+                min_weight=ctc_weight_min,
             )
-            logger.info(f"Epoch {epoch}: CTC weight = {ctc_weight:.4f}")
         else:
             ctc_weight = ctc_weight_initial  # Не используется, но для совместимости
-        
+
         # train
         model.train()
         total_train_loss = 0.0
@@ -1087,42 +1081,47 @@ def run_training(cfg: Config, device: str = "cuda"):
             with amp.autocast():
                 # New unified API
                 result = model(
-                    imgs, 
-                    text=text_in, 
-                    is_train=True, 
+                    imgs,
+                    text=text_in,
+                    is_train=True,
                     batch_max_length=max_len,
-                    mode=decoder_head  # "attention" или "both"
+                    mode=decoder_head,  # "attention" или "both"
                 )
-                
+
                 # Compute loss based on decoder_head
                 loss = torch.tensor(0.0, device=device)
                 attn_loss_val = torch.tensor(0.0, device=device)
                 ctc_loss_val = torch.tensor(0.0, device=device)
-                
+
                 if decoder_head == "attention":
                     # Pure attention mode
                     attn_logits = result["attention_logits"]
                     attn_loss_val = criterion(
-                        attn_logits.reshape(-1, attn_logits.size(-1)), 
-                        target_y.reshape(-1)
+                        attn_logits.reshape(-1, attn_logits.size(-1)),
+                        target_y.reshape(-1),
                     )
                     loss = attn_loss_val
-                    
+
                 elif decoder_head == "both":
                     # Dual loss mode
                     attn_logits = result["attention_logits"]
                     ctc_logits = result["ctc_logits"]
-                    
+
                     attn_loss_val = criterion(
-                        attn_logits.reshape(-1, attn_logits.size(-1)), 
-                        target_y.reshape(-1)
+                        attn_logits.reshape(-1, attn_logits.size(-1)),
+                        target_y.reshape(-1),
                     )
                     ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
-                    
+
                     # Weighted combination
                     loss = attn_loss_val * (1 - ctc_weight) + ctc_loss_val * ctc_weight
 
             scaler.scale(loss).backward()
+
+            # Gradient clipping для защиты от взрыва градиентов (NaN)
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
             scaler.step(optimizer)
             scaler.update()
 
@@ -1145,6 +1144,12 @@ def run_training(cfg: Config, device: str = "cuda"):
             pbar.set_postfix(
                 loss=f"{loss_val:.4f}", lr=f"{optimizer.param_groups[0]['lr']:.2e}"
             )
+
+            # OneCycleLR требует step после каждого батча
+            if scheduler is not None and isinstance(
+                scheduler, torch.optim.lr_scheduler.OneCycleLR
+            ):
+                scheduler.step()
 
         avg_train_loss = total_train_loss / max(1, len(train_loader))
         avg_attn_loss = total_attn_loss / max(1, len(train_loader))
@@ -1170,10 +1175,8 @@ def run_training(cfg: Config, device: str = "cuda"):
             total_val_loss = 0.0
             total_samples = 0
 
-            # Validation modes based on decoder_head
+            # Валидация только с attention decoder (CTC используется только при обучении)
             eval_modes = {"attention": {"mode": "attention", "decoder": "attention"}}
-            if decoder_head == "both":
-                eval_modes["ctc"] = {"mode": "both", "decoder": "ctc"}
 
             aggregate_mode_stats = {
                 mode_name: {
@@ -1209,7 +1212,7 @@ def run_training(cfg: Config, device: str = "cuda"):
                                     text=text_in,
                                     is_train=True,
                                     batch_max_length=max_len,
-                                    mode="attention"
+                                    mode="attention",
                                 )
                                 logits_tf = result["attention_logits"]
                                 val_loss = criterion(
@@ -1222,18 +1225,23 @@ def run_training(cfg: Config, device: str = "cuda"):
                                     text=text_in,
                                     is_train=True,
                                     batch_max_length=max_len,
-                                    mode="both"
+                                    mode="both",
                                 )
                                 attn_logits = result["attention_logits"]
                                 ctc_logits = result["ctc_logits"]
-                                
+
                                 attn_loss_val = criterion(
                                     attn_logits.reshape(-1, attn_logits.size(-1)),
                                     target_y.reshape(-1),
                                 )
-                                ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
-                                val_loss = attn_loss_val * (1 - ctc_weight) + ctc_loss_val * ctc_weight
-                                
+                                ctc_loss_val = model.compute_ctc_loss(
+                                    ctc_logits, target_y, lengths
+                                )
+                                val_loss = (
+                                    attn_loss_val * (1 - ctc_weight)
+                                    + ctc_loss_val * ctc_weight
+                                )
+
                         total_val_loss_single += float(val_loss.item())
 
                         preds_batch = {}
@@ -1323,33 +1331,21 @@ def run_training(cfg: Config, device: str = "cuda"):
                     stats["total_wer_sum"] / total_pred,
                 )
 
-            # Primary metrics (first mode)
-            primary_mode_name = list(eval_modes.keys())[0]
+            # Метрики только для attention decoder
+            primary_mode_name = "attention"
             val_acc, val_cer, val_wer = _finalize(primary_mode_name)
-            
-            # Secondary metrics if both heads
-            val_acc_secondary = val_cer_secondary = val_wer_secondary = None
-            if len(eval_modes) > 1:
-                secondary_mode_name = list(eval_modes.keys())[1]
-                val_acc_secondary, val_cer_secondary, val_wer_secondary = _finalize(secondary_mode_name)
 
             writer.add_scalar("Loss/val_epoch", avg_val_loss, epoch)
-            writer.add_scalar(f"Accuracy/val_{primary_mode_name}", val_acc, epoch)
-            writer.add_scalar(f"CER/val_{primary_mode_name}", val_cer, epoch)
-            writer.add_scalar(f"WER/val_{primary_mode_name}", val_wer, epoch)
-            
-            if val_acc_secondary is not None:
-                writer.add_scalar(f"Accuracy/val_{secondary_mode_name}", val_acc_secondary, epoch)
-                writer.add_scalar(f"CER/val_{secondary_mode_name}", val_cer_secondary, epoch)
-                writer.add_scalar(f"WER/val_{secondary_mode_name}", val_wer_secondary, epoch)
+            writer.add_scalar("Accuracy/val_attention", val_acc, epoch)
+            writer.add_scalar("CER/val_attention", val_cer, epoch)
+            writer.add_scalar("WER/val_attention", val_wer, epoch)
 
             # Визуализация случайных примеров в TensorBoard
             if val_loaders_individual:
                 # Выбираем случайный датасет для визуализации
                 random_val_loader = random.choice(val_loaders_individual)
-                
-                # Визуализация для основной головы
-                primary_mode = "attention" if use_attention_head else "ctc"
+
+                # Визуализация только attention decoder
                 visualize_predictions_tensorboard(
                     model=model,
                     val_loader=random_val_loader,
@@ -1361,29 +1357,10 @@ def run_training(cfg: Config, device: str = "cuda"):
                     writer=writer,
                     num_samples=10,
                     max_len=max_len,
-                    mode=primary_mode,
+                    mode="attention",
                     epoch=epoch,
                     logger=logger,
                 )
-
-                # Если decoder_head="both", визуализируем обе головы
-                if decoder_head == "both":
-                    secondary_mode = "ctc" if primary_mode == "attention" else "attention"
-                    visualize_predictions_tensorboard(
-                        model=model,
-                        val_loader=random_val_loader,
-                        itos=itos,
-                        pad_id=PAD,
-                        eos_id=EOS,
-                        blank_id=BLANK,
-                        device=device,
-                        writer=writer,
-                        num_samples=10,
-                        max_len=max_len,
-                        mode=secondary_mode,
-                        epoch=epoch,
-                        logger=logger,
-                    )
         else:
             logger.info(
                 f"Epoch {epoch:03d}: skipping validation (val_interval={val_interval})"
@@ -1400,14 +1377,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                     f"{val_cer:.6f}",
                     f"{val_wer:.6f}",
                 ]
-                if val_acc_secondary is not None:
-                    row.extend(
-                        [
-                            f"{val_acc_secondary:.6f}",
-                            f"{val_cer_secondary:.6f}",
-                            f"{val_wer_secondary:.6f}",
-                        ]
-                    )
                 row.append(f"{optimizer.param_groups[0]['lr']:.6e}")
                 w.writerow(row)
             else:
@@ -1419,8 +1388,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                     "skipped",
                     "skipped",
                 ]
-                if val_acc_secondary is not None:
-                    row.extend(["skipped", "skipped", "skipped"])
                 row.append(f"{optimizer.param_groups[0]['lr']:.6e}")
                 w.writerow(row)
 
@@ -1437,15 +1404,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                     f"WER={val_wer:.4f}",
                 ]
             )
-            if val_acc_secondary is not None:
-                secondary_mode_name = list(eval_modes.keys())[1]
-                msg_parts.extend(
-                    [
-                        f"acc_{secondary_mode_name}={val_acc_secondary:.4f}",
-                        f"CER_{secondary_mode_name}={val_cer_secondary:.4f}",
-                        f"WER_{secondary_mode_name}={val_wer_secondary:.4f}",
-                    ]
-                )
         else:
             msg_parts.append(f"val=skipped (val_interval={val_interval})")
         msg_parts.append(f"lr={optimizer.param_groups[0]['lr']:.2e}")
@@ -1584,7 +1542,10 @@ def run_training(cfg: Config, device: str = "cuda"):
                 logger.info(f"New best acc: {best_val_acc:.4f} (epoch {epoch})")
 
         if scheduler is not None:
-            if isinstance(scheduler, ReduceLROnPlateau):
+            # OneCycleLR вызывается после каждого батча, не здесь
+            if isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR):
+                pass
+            elif isinstance(scheduler, ReduceLROnPlateau):
                 if should_eval and avg_val_loss is not None:
                     scheduler.step(avg_val_loss)
             else:

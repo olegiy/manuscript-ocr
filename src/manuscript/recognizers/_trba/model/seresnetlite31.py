@@ -49,6 +49,7 @@ class SEBasicBlockLite(nn.Module):
         out = self.relu(out + identity)
         return out
 
+
 class SEResNet31Lite(nn.Module):
     def __init__(self, in_channels=3, out_channels=512, reduction=16):
         super().__init__()
@@ -65,20 +66,24 @@ class SEResNet31Lite(nn.Module):
         )
 
         # residual stages
-        self.layer1 = self._make_layer(128, 256, blocks=1, stride=2, reduction=reduction)
-        self.layer2 = self._make_layer(256, 256, blocks=2, stride=1, reduction=reduction)
-        self.layer3 = self._make_layer(256, 512, blocks=5, stride=2, reduction=reduction)
-        self.layer4 = self._make_layer(512, 512, blocks=3, stride=1, reduction=reduction)
+        self.layer1 = self._make_layer(
+            128, 256, blocks=1, stride=2, reduction=reduction
+        )
+        self.layer2 = self._make_layer(
+            256, 256, blocks=2, stride=1, reduction=reduction
+        )
+        self.layer3 = self._make_layer(
+            256, 512, blocks=5, stride=2, reduction=reduction
+        )
+        self.layer4 = self._make_layer(
+            512, 512, blocks=3, stride=1, reduction=reduction
+        )
 
-        # ======================================================
-        # 🔹 Оптимизированный conv_out с depthwise + pointwise
-        # ======================================================
         self.conv_out = nn.Sequential(
             nn.Conv2d(512, 512, 3, stride=(2, 1), padding=1, groups=512, bias=False),
             nn.Conv2d(512, out_channels, 1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(True),
-
             nn.Conv2d(out_channels, out_channels, 1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(True),

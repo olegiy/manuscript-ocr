@@ -42,13 +42,10 @@ dependencies = [
     # Data validation and utilities
     "pydantic>=2.0",
     "tqdm>=4.60",
+    "gdown>=4.4",
 ]
 
 [project.optional-dependencies]
-# Optional dependencies for downloading pretrained weights
-download = [
-    "gdown>=4.4",
-]
 
 # Full development dependencies (includes PyTorch for training)
 dev = [
@@ -78,15 +75,6 @@ dev = [
     "twine>=4",
 ]
 
-# Alias for training (same as dev)
-training = [
-    "manuscript-ocr[dev]",
-]
-
-# All optional dependencies combined
-all = [
-    "manuscript-ocr[download,dev]",
-]
 
 [tool.setuptools]
 include-package-data = true

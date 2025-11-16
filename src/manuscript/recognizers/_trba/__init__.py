@@ -23,23 +23,23 @@ from .training.train import Config, run_training
 def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
     """
     CTC greedy декодирование с удалением повторов и blank токенов.
-    
+
     Args:
         logits: [B, W, num_classes] - CTC логиты
         blank_id: ID blank токена (обычно 0)
-        
+
     Returns:
         decoded: [B, T] - декодированные последовательности (с паддингом -1)
     """
     # Greedy decode: берем argmax
     preds = logits.argmax(dim=-1)  # [B, W]
-    
+
     batch_size = preds.size(0)
     decoded_batch = []
-    
+
     for b in range(batch_size):
         pred_seq = preds[b].tolist()  # [W]
-        
+
         # CTC постобработка: удаляем повторы и blank
         decoded = []
         prev_token = None
@@ -47,16 +47,16 @@ def ctc_greedy_decode(logits: torch.Tensor, blank_id: int = 0) -> torch.Tensor:
             if token != blank_id and token != prev_token:
                 decoded.append(token)
             prev_token = token
-        
+
         decoded_batch.append(decoded)
-    
+
     # Паддинг до одинаковой длины
     max_len = max(len(seq) for seq in decoded_batch) if decoded_batch else 1
     padded = []
     for seq in decoded_batch:
         padded_seq = seq + [-1] * (max_len - len(seq))
         padded.append(padded_seq)
-    
+
     return torch.tensor(padded, dtype=torch.long, device=logits.device)
 
 
@@ -193,16 +193,11 @@ class TRBA:
         self.cnn_in_channels = config.get("cnn_in_channels", 3)
         self.cnn_out_channels = config.get("cnn_out_channels", 512)
         self.cnn_backbone = config.get("cnn_backbone", "seresnet31")
-        
-        # Decoder head configuration
-        self.decoder_head = config.get("decoder_head", "attention")
-        if self.decoder_head not in ("attention", "both"):
-            raise ValueError(
-                f"decoder_head должен быть 'attention' или 'both', получен: {self.decoder_head}"
-            )
-        self.use_ctc_head = self.decoder_head == "both"
+
+        # При инференсе всегда используем только attention decoder
+        # (CTC используется только при обучении для стабилизации)
+        self.use_ctc_head = False
         self.use_attention_head = True
-        self.ctc_weight = config.get("ctc_weight", 0.3)
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -320,7 +315,7 @@ class TRBA:
             map_location=self.device,
             strict=False,  # Allow missing keys if CTC head not in checkpoint
         )
-        
+
         model.eval()
         return model
 
@@ -414,7 +409,7 @@ class TRBA:
         else:
             images_list = images
 
-        if mode != 'attention':
+        if mode != "attention":
             raise ValueError("predict() поддерживает только режим 'attention'.")
 
         results: List[Dict[str, Any]] = []
@@ -433,10 +428,10 @@ class TRBA:
                     batch_tensor,
                     is_train=False,
                     batch_max_length=self.max_length,
-                    mode='attention',
+                    mode="attention",
                 )
-                logits = result['attention_logits']
-                pred_ids = result['attention_preds']
+                logits = result["attention_logits"]
+                pred_ids = result["attention_preds"]
                 probs = F.log_softmax(logits, dim=-1)
 
                 for j, pred_row in enumerate(pred_ids):
@@ -455,7 +450,7 @@ class TRBA:
                     else:
                         confidence = 0.0
 
-                    results.append({'text': decoded, 'confidence': confidence})
+                    results.append({"text": decoded, "confidence": confidence})
 
         return results
 
@@ -477,13 +472,14 @@ class TRBA:
         cnn_in_channels: int = 3,
         cnn_out_channels: int = 512,
         cnn_backbone: str = "seresnet31",
-        decoder_head: str = "attention",
         ctc_weight: float = 0.3,
+        ctc_weight_decay_epochs: int = 50,
+        max_grad_norm: float = 5.0,
         batch_size: int = 32,
         epochs: int = 20,
         lr: float = 1e-3,
-        optimizer: str = "Adam",
-        scheduler: str = "ReduceLROnPlateau",
+        optimizer: str = "AdamW",
+        scheduler: str = "OneCycleLR",
         weight_decay: float = 0.0,
         momentum: float = 0.9,
         val_interval: int = 1,
@@ -547,17 +543,15 @@ class TRBA:
         cnn_backbone : {"seresnet31", "seresnet31-lite"}, optional
             CNN backbone variant. ``"seresnet31"`` keeps the standard SE-ResNet-31,
             while ``"seresnet31-lite"`` enables a depthwise-lite version. Default is ``"seresnet31"``.
-        decoder_head : {"attention", "both"}, optional
-            Which decoder head(s) to use during training:
-
-            - ``"attention"`` — only Attention decoder (accurate, greedy only)
-            - ``"both"`` — dual training with Attention + CTC heads
-
-            Default is ``"attention"``.
         ctc_weight : float, optional
-            Weight for CTC loss when ``decoder_head="both"``: 
+            Initial weight for CTC loss during training (CTC always used for stability):
             ``loss = attn_loss * (1 - ctc_weight) + ctc_loss * ctc_weight``.
-            Default is 0.3.
+            CTC weight decays over epochs. Default is 0.3.
+        ctc_weight_decay_epochs : int, optional
+            Number of epochs for CTC weight to decay to minimum. Default is 50.
+        max_grad_norm : float, optional
+            Maximum gradient norm for clipping (prevents gradient explosion/NaN).
+            Default is 5.0.
         batch_size : int, optional
             Training batch size. Default is 32.
         epochs : int, optional
@@ -565,9 +559,16 @@ class TRBA:
         lr : float, optional
             Learning rate. Default is 1e-3.
         optimizer : {"Adam", "SGD", "AdamW"}, optional
-            Optimizer type. Default is ``"Adam"``.
-        scheduler : {"ReduceLROnPlateau", "StepLR", "CosineAnnealingLR"}, optional
-            Learning rate scheduler type. Default is ``"ReduceLROnPlateau"``.
+            Optimizer type. Default is ``"AdamW"``.
+        scheduler : {"ReduceLROnPlateau", "CosineAnnealingLR", "OneCycleLR", "None"}, optional
+            Learning rate scheduler type:
+
+            - ``"OneCycleLR"`` — one-cycle policy with cosine annealing (default, recommended)
+            - ``"ReduceLROnPlateau"`` — reduce LR on validation loss plateau
+            - ``"CosineAnnealingLR"`` — cosine annealing over epochs
+            - ``"None"`` or ``None`` — constant learning rate
+
+            Default is ``"OneCycleLR"``.
         weight_decay : float, optional
             L2 weight decay coefficient. Default is 0.0.
         momentum : float, optional
@@ -670,13 +671,17 @@ class TRBA:
         ...     lr=1e-4,
         ... )
 
-        Train with dual heads (CTC + Attention):
+        Train with CTC for stability (always enabled):
 
         >>> best_model = TRBA.train(
         ...     train_csvs="data/train.csv",
         ...     train_roots="data/train_images",
-        ...     decoder_head="both",
+        ...     optimizer="AdamW",
+        ...     scheduler="OneCycleLR",
+        ...     lr=1e-3,
         ...     ctc_weight=0.3,
+        ...     ctc_weight_decay_epochs=50,
+        ...     max_grad_norm=5.0,
         ...     epochs=100,
         ... )
         """
@@ -688,27 +693,27 @@ class TRBA:
                 "Parameter 'eval_every' is deprecated and will be removed in a future version. "
                 "Use 'val_interval' instead.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             if val_interval == 1:  # Check if val_interval is still default
                 val_interval = eval_every
-        
+
         if resume_path is not None:
             warnings.warn(
                 "Parameter 'resume_path' is deprecated and will be removed in a future version. "
                 "Use 'resume_from' instead.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             if resume_from is None:  # resume_from takes priority
                 resume_from = resume_path
-        
+
         if save_every is not None:
             warnings.warn(
                 "Parameter 'save_every' is deprecated and will be removed in a future version. "
                 "Use 'save_interval' instead.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             if save_interval is None:  # save_interval takes priority
                 save_interval = save_every
@@ -787,8 +792,9 @@ class TRBA:
             "cnn_in_channels": cnn_in_channels,
             "cnn_out_channels": cnn_out_channels,
             "cnn_backbone": cnn_backbone,
-            "decoder_head": decoder_head,
             "ctc_weight": ctc_weight,
+            "ctc_weight_decay_epochs": ctc_weight_decay_epochs,
+            "max_grad_norm": max_grad_norm,
             "batch_size": batch_size,
             "epochs": epochs,
             "lr": lr,
