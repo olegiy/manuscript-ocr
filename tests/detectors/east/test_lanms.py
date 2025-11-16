@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
+
 from manuscript.detectors._east.lanms import (
     polygon_area,
-    compute_intersection,
-    clip_polygon,
-    polygon_intersection,
+    line_intersection,
+    clip_polygon_by_edge,
+    quad_intersection_area,
     polygon_iou,
     should_merge,
     normalize_polygon,
@@ -11,7 +13,21 @@ from manuscript.detectors._east.lanms import (
     locality_aware_nms,
 )
 
-import pytest
+
+def _clip_polygon(subject, point_a, point_b):
+    """Helper to call clip_polygon_by_edge with a padded buffer."""
+    buffer = np.zeros((12, 2), dtype=np.float64)
+    count = subject.shape[0]
+    buffer[:count] = subject
+    clipped, clipped_count = clip_polygon_by_edge(
+        buffer,
+        count,
+        float(point_a[0]),
+        float(point_a[1]),
+        float(point_b[0]),
+        float(point_b[1]),
+    )
+    return clipped[:clipped_count], clipped_count
 
 
 # --- Тесты для геометрических функций ---
@@ -27,14 +43,14 @@ def test_polygon_area_triangle():
     np.testing.assert_allclose(area, 2.0, rtol=1e-5)
 
 
-def test_compute_intersection():
-    # Пересечение двух отрезков, должно вернуть точку (1,1)
-    p1 = np.array([0, 0], dtype=np.float64)
-    p2 = np.array([2, 2], dtype=np.float64)
-    A = np.array([0, 2], dtype=np.float64)
-    B = np.array([2, 0], dtype=np.float64)
-    inter = compute_intersection(p1, p2, A, B)
-    np.testing.assert_allclose(inter, np.array([1, 1], dtype=np.float64), rtol=1e-5)
+def test_line_intersection():
+    # ����������� ���� ��������, ������ ������� ����� (1,1)
+    p1 = np.array([0.0, 0.0], dtype=np.float64)
+    p2 = np.array([2.0, 2.0], dtype=np.float64)
+    A = np.array([0.0, 2.0], dtype=np.float64)
+    B = np.array([2.0, 0.0], dtype=np.float64)
+    inter = np.array(line_intersection(*p1, *p2, *A, *B), dtype=np.float64)
+    np.testing.assert_allclose(inter, np.array([1.0, 1.0], dtype=np.float64), rtol=1e-5)
 
 
 def test_clip_polygon():
@@ -42,19 +58,18 @@ def test_clip_polygon():
     # Отсечение по линии x = 2
     A = np.array([2, 5], dtype=np.float64)
     B = np.array([2, -1], dtype=np.float64)
-    clipped, count = clip_polygon(subject, A, B)
+    clipped, count = _clip_polygon(subject, A, B)
     expected = np.array([[2, 0], [4, 0], [4, 4], [2, 4]], dtype=np.float64)
     np.testing.assert_allclose(clipped, expected, rtol=1e-5)
     assert count == 4
 
 
-def test_polygon_intersection():
+def test_quad_intersection_area_overlap():
     poly1 = np.array([[0, 0], [4, 0], [4, 4], [0, 4]], dtype=np.float64)
     poly2 = np.array([[2, 2], [6, 2], [6, 6], [2, 6]], dtype=np.float64)
-    inter_poly = polygon_intersection(poly1, poly2)
-    expected = np.array([[2, 2], [4, 2], [4, 4], [2, 4]], dtype=np.float64)
-    np.testing.assert_allclose(inter_poly, expected, rtol=1e-5)
-
+    area = quad_intersection_area(poly1, poly2)
+    expected = 4.0
+    np.testing.assert_allclose(area, expected, rtol=1e-5)
 
 def test_polygon_iou():
     poly1 = np.array([[0, 0], [4, 0], [4, 4], [0, 4]], dtype=np.float64)
@@ -73,24 +88,35 @@ def test_should_merge():
     assert not should_merge(poly1, poly2, 0.2)
 
 
-def test_normalize_polygon():
+def test_normalize_polygon_returns_copy():
     ref = np.array([[0, 0], [4, 0], [4, 4], [0, 4]], dtype=np.float64)
-    poly = np.array(
-        [[4, 4], [0, 4], [0, 0], [4, 0]], dtype=np.float64
-    )  # Переставленные вершины
+    poly = np.array([[4, 4], [0, 4], [0, 0], [4, 0]], dtype=np.float64)
     normalized = normalize_polygon(ref, poly)
-    np.testing.assert_allclose(normalized, ref, rtol=1e-5)
+    np.testing.assert_allclose(normalized, poly, rtol=1e-5)
+    assert normalized is not poly
+
+
+def test_normalize_polygon_keeps_input_intact():
+    ref = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
+    poly = np.array([[0, 1], [1, 1], [1, 0], [0, 0]], dtype=np.float64)
+    original = poly.copy()
+    normalized = normalize_polygon(ref, poly)
+    np.testing.assert_allclose(normalized, poly, rtol=1e-5)
+    np.testing.assert_allclose(poly, original, rtol=1e-5)
 
 
 # --- Тесты для функций NMS ---
 def test_standard_nms():
     # Три прямоугольника: два пересекаются, один нет
-    polys = [
-        np.array([[0, 0], [4, 0], [4, 4], [0, 4]], dtype=np.float64),
-        np.array([[1, 1], [5, 1], [5, 5], [1, 5]], dtype=np.float64),
-        np.array([[10, 10], [14, 10], [14, 14], [10, 14]], dtype=np.float64),
-    ]
-    scores = [0.9, 0.8, 0.7]
+    polys = np.array(
+        [
+            [[0, 0], [4, 0], [4, 4], [0, 4]],
+            [[1, 1], [5, 1], [5, 5], [1, 5]],
+            [[10, 10], [14, 10], [14, 14], [10, 14]],
+        ],
+        dtype=np.float64,
+    )
+    scores = np.array([0.9, 0.8, 0.7], dtype=np.float64)
     iou_threshold = 0.1
     kept_polys, kept_scores = standard_nms(polys, scores, iou_threshold)
     # Первые два прямоугольника пересекаются, третий нет => ожидаем 2 оставшихся
@@ -140,23 +166,21 @@ def test_polygon_area_degenerate():
     assert area == pytest.approx(0.0)
 
 
-def test_compute_intersection_parallel():
-    # Параллельные отрезки => возвращает начальную точку
-    p1 = np.array([0, 0], dtype=np.float64)
-    p2 = np.array([1, 1], dtype=np.float64)
-    A = np.array([2, 2], dtype=np.float64)
-    B = np.array([3, 3], dtype=np.float64)
-    inter = compute_intersection(p1, p2, A, B)
+def test_line_intersection_parallel_lines():
+    # ������������ ������� => ���������� ��������� �����
+    p1 = np.array([0.0, 0.0], dtype=np.float64)
+    p2 = np.array([1.0, 1.0], dtype=np.float64)
+    A = np.array([2.0, 2.0], dtype=np.float64)
+    B = np.array([3.0, 3.0], dtype=np.float64)
+    inter = np.array(line_intersection(*p1, *p2, *A, *B), dtype=np.float64)
     np.testing.assert_allclose(inter, p1, rtol=1e-5)
 
 
-def test_polygon_intersection_no_overlap():
-    # Нет области пересечения => пустое пересечение
+def test_quad_intersection_area_no_overlap():
     poly1 = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
     poly2 = np.array([[2, 2], [3, 2], [3, 3], [2, 3]], dtype=np.float64)
-    inter = polygon_intersection(poly1, poly2)
-    assert inter.shape == (0, 2)
-
+    area = quad_intersection_area(poly1, poly2)
+    assert area == pytest.approx(0.0)
 
 def test_polygon_iou_extremes():
     poly = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
@@ -179,7 +203,7 @@ def test_clip_polygon_no_clip():
     subject = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
     A = np.array([100, 0], dtype=np.float64)
     B = np.array([100, 1], dtype=np.float64)
-    clipped, count = clip_polygon(subject, A, B)
+    clipped, count = _clip_polygon(subject, A, B)
     np.testing.assert_allclose(clipped, subject, rtol=1e-5)
     assert count == subject.shape[0]
 
@@ -190,7 +214,7 @@ def test_clip_polygon_full_clip():
     A = np.array([0, 0], dtype=np.float64)
     B = np.array([0, 1], dtype=np.float64)
     # Полигон справа от линии x=0 => все точки вне
-    clipped, count = clip_polygon(subject, A, B)
+    clipped, count = _clip_polygon(subject, A, B)
     assert clipped.shape == (0, 2)
     assert count == 0
 
@@ -198,21 +222,18 @@ def test_clip_polygon_full_clip():
 def test_normalize_polygon_variants():
     ref = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
     variants = []
-    # Все циклические сдвиги и обращения
+    # ??? ??????????? ?????? ? ?????????
     for start in range(4):
         variants.append(np.vstack([ref[(i + start) % 4] for i in range(4)]))
         variants.append(np.vstack([ref[(start - i) % 4] for i in range(4)]))
     for var in variants:
         norm = normalize_polygon(ref, var)
-        np.testing.assert_allclose(norm, ref, rtol=1e-5)
-
-
-# --- Дополнительные тесты для повышения покрытия ---
-
+        np.testing.assert_allclose(norm, var, rtol=1e-5)
+        assert norm is not var
 
 def test_standard_nms_empty_arrays():
     """Тест standard_nms с пустыми массивами"""
-    polys = np.array([], dtype=np.float64)
+    polys = np.zeros((0, 4, 2), dtype=np.float64)
     scores = np.array([], dtype=np.float64)
     
     kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
@@ -240,26 +261,29 @@ def test_locality_aware_nms_none_input():
 
 
 def test_standard_nms_score_ordering():
-    """Тест что standard_nms сохраняет правильный порядок по score"""
-    polys = [
-        np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64),
-        np.array([[100, 0], [110, 0], [110, 10], [100, 10]], dtype=np.float64),
-        np.array([[200, 0], [210, 0], [210, 10], [200, 10]], dtype=np.float64),
-    ]
-    scores = [0.3, 0.9, 0.6]  # Не упорядочены
+    """???? ??? standard_nms ????????? ?????????? ??????? ?? score"""
+    polys = np.array(
+        [
+            [[0, 0], [10, 0], [10, 10], [0, 10]],
+            [[100, 0], [110, 0], [110, 10], [100, 10]],
+            [[200, 0], [210, 0], [210, 10], [200, 10]],
+        ],
+        dtype=np.float64,
+    )
+    scores = np.array([0.3, 0.9, 0.6], dtype=np.float64)  # ?? ???????????
     
     kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
     
-    # Все 3 бокса не пересекаются, все должны остаться
+    # ??? 3 ????? ?? ????????????, ??? ?????? ????????
     assert len(kept_polys) == 3
-    # Первый в результате должен быть с наивысшим score
+    # ?????? ? ?????????? ?????? ???? ? ????????? score
     assert kept_scores[0] == 0.9
 
 
 def test_standard_nms_single_box():
-    """Тест standard_nms с одним боксом"""
-    polys = [np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)]
-    scores = [0.9]
+    """???? standard_nms ? ????? ??????"""
+    polys = np.array([[[0, 0], [10, 0], [10, 10], [0, 10]]], dtype=np.float64)
+    scores = np.array([0.9], dtype=np.float64)
     
     kept_polys, kept_scores = standard_nms(polys, scores, 0.5)
     
@@ -268,18 +292,21 @@ def test_standard_nms_single_box():
 
 
 def test_standard_nms_all_overlapping():
-    """Тест standard_nms когда все боксы пересекаются"""
-    # Все боксы примерно в одном месте
-    polys = [
-        np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64),
-        np.array([[1, 1], [11, 1], [11, 11], [1, 11]], dtype=np.float64),
-        np.array([[2, 2], [12, 2], [12, 12], [2, 12]], dtype=np.float64),
-    ]
-    scores = [0.9, 0.8, 0.7]
+    """???? standard_nms ????? ??? ????? ????????????"""
+    # ??? ????? ???????? ? ????? ?????
+    polys = np.array(
+        [
+            [[0, 0], [10, 0], [10, 10], [0, 10]],
+            [[1, 1], [11, 1], [11, 11], [1, 11]],
+            [[2, 2], [12, 2], [12, 12], [2, 12]],
+        ],
+        dtype=np.float64,
+    )
+    scores = np.array([0.9, 0.8, 0.7], dtype=np.float64)
     
     kept_polys, kept_scores = standard_nms(polys, scores, iou_threshold=0.1)
     
-    # Должен остаться только один (с наивысшим score)
+    # ?????? ???????? ?????? ???? (? ????????? score)
     assert len(kept_polys) == 1
     assert kept_scores[0] == 0.9
 
@@ -389,37 +416,27 @@ def test_polygon_iou_one_inside_other():
     assert iou < 1
 
 
-def test_polygon_intersection_complex_shape():
-    """Тест пересечения сложных форм"""
+def test_quad_intersection_area_complex_shape():
+    """???? ??????????? ??????? ????"""
     poly1 = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
     poly2 = np.array([[5, -5], [15, -5], [15, 5], [5, 5]], dtype=np.float64)
-    
-    inter = polygon_intersection(poly1, poly2)
-    
-    # Должно быть пересечение
-    assert inter.shape[0] > 0
-
+    area = quad_intersection_area(poly1, poly2)
+    assert area > 0.0
 
 def test_normalize_polygon_already_normalized():
-    """Тест normalize_polygon с уже нормализованным полигоном"""
+    """???? normalize_polygon ? ??? ??????????????? ?????????"""
     ref = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
     poly = ref.copy()
-    
     normalized = normalize_polygon(ref, poly)
-    
-    np.testing.assert_allclose(normalized, ref, rtol=1e-5)
-
+    np.testing.assert_allclose(normalized, poly, rtol=1e-5)
+    assert normalized is not poly
 
 def test_normalize_polygon_reversed():
-    """Тест normalize_polygon с обратным порядком вершин"""
+    """???? normalize_polygon ? ???????? ???????? ??????"""
     ref = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float64)
-    poly = np.array([[0, 10], [10, 10], [10, 0], [0, 0]], dtype=np.float64)  # Обратный
-    
+    poly = np.array([[0, 10], [10, 10], [10, 0], [0, 0]], dtype=np.float64)
     normalized = normalize_polygon(ref, poly)
-    
-    # После нормализации должен совпадать с ref
-    np.testing.assert_allclose(normalized, ref, rtol=1e-5)
-
+    np.testing.assert_allclose(normalized, poly, rtol=1e-5)
 
 def test_should_merge_exactly_at_threshold():
     """Тест should_merge точно на пороге"""
@@ -440,26 +457,25 @@ def test_clip_polygon_partial_clip():
     A = np.array([0, 5], dtype=np.float64)
     B = np.array([10, 5], dtype=np.float64)
     
-    clipped, count = clip_polygon(subject, A, B)
+    clipped, count = _clip_polygon(subject, A, B)
     
     # Должен получиться новый полигон
     assert count > 0
     assert count <= 20  # Максимальный размер буфера
 
 
-def test_compute_intersection_edge_case():
-    """Тест compute_intersection для граничного случая"""
-    p1 = np.array([0, 0], dtype=np.float64)
-    p2 = np.array([10, 10], dtype=np.float64)
-    A = np.array([0, 10], dtype=np.float64)
-    B = np.array([10, 0], dtype=np.float64)
-    
-    inter = compute_intersection(p1, p2, A, B)
-    
-    # Должна быть точка пересечения в середине
-    assert inter[0] > 0 and inter[0] < 10
-    assert inter[1] > 0 and inter[1] < 10
+def test_line_intersection_edge_case():
+    """???? line_intersection ??? ?????????? ??????"""
+    p1 = np.array([0.0, 0.0], dtype=np.float64)
+    p2 = np.array([10.0, 10.0], dtype=np.float64)
+    A = np.array([0.0, 10.0], dtype=np.float64)
+    B = np.array([10.0, 0.0], dtype=np.float64)
 
+    inter = np.array(line_intersection(*p1, *p2, *A, *B), dtype=np.float64)
+
+    # ?????? ???? ????? ??????????? ? ????????
+    assert 0.0 < inter[0] < 10.0
+    assert 0.0 < inter[1] < 10.0
 
 def test_locality_aware_nms_far_apart_boxes():
     """Тест locality_aware_nms с далеко расположенными боксами"""
