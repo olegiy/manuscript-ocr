@@ -1008,11 +1008,12 @@ def run_training(cfg: Config, device: str = "cuda"):
         total_steps = len(train_loader) * epochs
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=lr * 3,
-            total_steps=total_steps,
+            max_lr=lr * 2,
+            steps_per_epoch=len(train_loader),
+            epochs=epochs,
             pct_start=0.1,
             anneal_strategy="cos",
-            cycle_momentum=False,
+            div_factor=25,
         )
         logger.info(
             f"OneCycleLR: max_lr={lr * 3:.6f}, total_steps={total_steps}, pct_start=0.1"
