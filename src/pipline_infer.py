@@ -2,8 +2,8 @@ from manuscript import Pipeline
 from manuscript.recognizers import TRBA
 
 
-recognizer = TRBA(model_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\best_acc_weights.pth", 
-config_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\config.json")
+recognizer = TRBA(model_path = r"C:\Users\USER\manuscript-ocr\model.onnx", 
+config_path = r"C:\Users\USER\manuscript-ocr\experiments\trba_exp_printed_lite256\config.json")
 
 # Инициализация с моделями по умолчанию
 pipeline = Pipeline(recognizer=recognizer)

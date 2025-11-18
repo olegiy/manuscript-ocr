@@ -53,4 +53,5 @@ print(text)
 - [Детектор (EAST)](./docs/DETECTOR.md) - настройка и использование детектора текста
 - [Распознаватель (TRBA)](./docs/RECOGNIZERS.md) - распознавание и обучение моделей
 - [Pipeline API](./docs/PIPELINE_API.md) - интеграция и создание кастомных компонентов
+- [ONNX Export](./docs/ONNX_EXPORT.md) - экспорт моделей в ONNX для production (см. также [Quick Start](./docs/ONNX_QUICK_START.md))
 

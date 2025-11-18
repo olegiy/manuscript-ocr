@@ -3,6 +3,7 @@ import os
 import logging
 import csv
 import random
+import shutil
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List
 
@@ -557,10 +558,10 @@ def run_training(cfg: Config, device: str = "cuda"):
     # CTC loss weight для стабилизации начального обучения
     ctc_weight_initial = getattr(cfg, "ctc_weight", 0.3)
     ctc_weight_decay_epochs = getattr(
-        cfg, "ctc_weight_decay_epochs", 50
-    )  # Затухание за 50 эпох
+        cfg, "ctc_weight_decay_epochs", 15
+    )  # Затухание за 15 эпох
     ctc_weight_min = getattr(
-        cfg, "ctc_weight_min", 0.0
+        cfg, "ctc_weight_min", 0.03
     )  # Полное затухание после decay_epochs
 
     # Gradient clipping для защиты от взрыва градиентов
@@ -607,6 +608,12 @@ def run_training(cfg: Config, device: str = "cuda"):
     BLANK = stoi.get("<BLANK>", None)
     num_classes = len(itos)
     logger.info(f"Charset loaded: {num_classes} tokens")
+    
+    # Копируем charset в папку эксперимента
+    charset_dest = os.path.join(exp_dir, "charset.txt")
+    if not os.path.exists(charset_dest) or os.path.abspath(charset_path) != os.path.abspath(charset_dest):
+        shutil.copy2(charset_path, charset_dest)
+        logger.info(f"Charset copied to experiment dir: {charset_dest}")
 
     # --- модель ---
     num_encoder_layers = getattr(cfg, "num_encoder_layers", 2)
@@ -1016,7 +1023,7 @@ def run_training(cfg: Config, device: str = "cuda"):
             div_factor=25,
         )
         logger.info(
-            f"OneCycleLR: max_lr={lr * 3:.6f}, total_steps={total_steps}, pct_start=0.1"
+            f"OneCycleLR: max_lr={lr * 2:.6f}, total_steps={total_steps}, pct_start=0.1"
         )
     elif scheduler_name_for_later in ("None", None, ""):
         scheduler = None

@@ -51,7 +51,7 @@ def load_checkpoint(
 ):
     if map_location == "auto":
         map_location = "cuda" if torch.cuda.is_available() else "cpu"
-    ckpt_obj = torch.load(path, map_location=map_location)
+    ckpt_obj = torch.load(path, map_location=map_location, weights_only=False)
 
     if isinstance(ckpt_obj, dict) and "model_state" in ckpt_obj:
         model_state = ckpt_obj["model_state"]
@@ -61,7 +61,45 @@ def load_checkpoint(
         metadata = {"model_state": model_state}
 
     if model is not None:
-        model.load_state_dict(model_state, strict=strict)
+        current_state = model.state_dict()
+        filtered_state = {}
+        skipped_keys = []
+        shape_mismatches = []
+        
+        for k, v in model_state.items():
+            if k in current_state:
+                if current_state[k].shape == v.shape:
+                    filtered_state[k] = v
+                else:
+                    shape_mismatches.append(
+                        f"{k}: checkpoint {v.shape} vs model {current_state[k].shape}"
+                    )
+            else:
+                skipped_keys.append(k)
+        
+        missing_keys = set(current_state.keys()) - set(filtered_state.keys())
+        
+        result = model.load_state_dict(filtered_state, strict=False)
+        
+        if shape_mismatches or skipped_keys or missing_keys:
+            if shape_mismatches:
+                print(f"⚠️  Shape mismatches (skipped {len(shape_mismatches)} layers):")
+                for msg in shape_mismatches[:5]:
+                    print(f"   - {msg}")
+                if len(shape_mismatches) > 5:
+                    print(f"   ... and {len(shape_mismatches) - 5} more")
+            
+            if missing_keys:
+                print(f"ℹ️  Missing keys in checkpoint (initialized randomly): {len(missing_keys)}")
+                for key in list(missing_keys)[:3]:
+                    print(f"   - {key}")
+                if len(missing_keys) > 3:
+                    print(f"   ... and {len(missing_keys) - 3} more")
+        
+        loaded_params = sum(p.numel() for p in filtered_state.values())
+        total_params = sum(p.numel() for p in current_state.values())
+        print(f"✓ Loaded {len(filtered_state)}/{len(current_state)} layers "
+              f"({loaded_params/1e6:.1f}M/{total_params/1e6:.1f}M parameters)")
 
     if optimizer is not None and metadata.get("optimizer_state") is not None:
         optimizer.load_state_dict(metadata["optimizer_state"])

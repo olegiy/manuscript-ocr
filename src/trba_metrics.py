@@ -9,6 +9,7 @@ from manuscript.recognizers._trba.training.metrics import (
     compute_accuracy,
 )
 import Levenshtein
+from tqdm import tqdm
 
 
 # === Пути ===
@@ -18,22 +19,10 @@ datasets = [
         "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\img",
         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\labels.csv",
     },
-    {
-        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\img",
-         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\labels.csv",
-    },
-    {
-        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\img",
-        "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\labels.csv",
-    },
-    {
-        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\train\img",
-         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\train\labels.csv",
-    },
 ]
 
-model_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\best_acc_weights.pth"
-config_path = r"C:\Users\USER\Desktop\OCR_MODELS\exp_2\config.json"
+model_path = r"C:\Users\USER\manuscript-ocr\model.onnx"
+config_path = r"C:\Users\USER\manuscript-ocr\experiments\trba_exp_printed_lite256\config.json"
 
 batch_size = 64
 
@@ -87,6 +76,12 @@ for idx, dataset in enumerate(datasets, 1):
         print(f"📁 Датасет {idx}: Найдено {len(dataset_images)} изображений")
         images.extend(dataset_images)
 
+# === Ограничиваем количество изображений ===
+max_images = 1000
+if len(images) > max_images:
+    print(f"⚠️ Берём только первые {max_images} изображений из {len(images)}")
+    images = images[:max_images]
+
 if not images:
     raise RuntimeError(f"❌ Не найдено изображений ни в одном датасете!")
 
@@ -97,12 +92,10 @@ recognizer = TRBA(model_path=model_path, config_path=config_path)
 
 # === Выбор режима декодирования ===
 # Доступные режимы: "greedy", "beam"
-decode_mode = "greedy"  # Измените на "beam" для тестирования
-print(f"🔧 Режим декодирования: {decode_mode}")
 
 # === Распознаём ===
 start_time = time.perf_counter()
-results = recognizer.predict(images=images, batch_size=batch_size, mode=decode_mode)
+results = recognizer.predict(images=images, batch_size=batch_size)
 end_time = time.perf_counter()
 print(results)
 total_time = end_time - start_time

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict, Any
+from pathlib import Path
 
 from .seresnet31 import SEResNet31
 from .seresnetlite31 import SEResNet31Lite
@@ -27,6 +28,44 @@ class BidirectionalLSTM(nn.Module):
         h, _ = self.rnn(x)  # [B, T, 2H]
         out = self.linear(h)  # [B, T, D]
         return out
+
+
+class TRBAONNXWrapper(nn.Module):
+    """
+    ONNX-friendly wrapper для TRBA модели.
+    
+    Особенности:
+    - Фиксированная длина декодирования (max_length шагов)
+    - Greedy decoding (без beam search)
+    - Только attention декодер (CTC только для обучения)
+    """
+    
+    def __init__(self, trba_model, max_length: int = 40):
+        """
+        Args:
+            trba_model: TRBAModel instance
+            max_length: Максимальная длина декодирования
+        """
+        super().__init__()
+        self.model = trba_model
+        self.max_length = max_length
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, 3, H, W] - входные изображения
+            
+        Returns:
+            logits: [B, max_length, num_classes] - логиты для каждой позиции
+        """
+        logits, _ = self.model.forward_attention(
+            x,
+            text=None,
+            is_train=False,
+            batch_max_length=self.max_length,
+            onnx_mode=True
+        )
+        return logits
 
 
 class AttentionCell(nn.Module):
@@ -105,7 +144,6 @@ class AttentionDecoder(nn.Module):
         return F.one_hot(input_char, num_classes=self.num_classes).float()
 
     def _mask_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        """Маскирование blank токена если он есть."""
         if self.blank_id is not None:
             if logits.dim() == 3:
                 logits[:, :, self.blank_id] = -1e4
