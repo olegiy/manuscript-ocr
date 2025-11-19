@@ -474,13 +474,11 @@ class EAST:
         model_name : str, optional
             Folder name inside ``experiment_root`` for logs and checkpoints.
             Default is ``"resnet_quad"``.
-        backbone_name : {"resnet50", "resnet101", "efficientnet_b5", "convnext_small"}, optional
+        backbone_name : {"resnet50", "resnet101"}, optional
             Backbone architecture to use. Options:
             
             - ``"resnet50"`` — ResNet-50 (faster, less parameters)
             - ``"resnet101"`` — ResNet-101 (slower, more capacity)
-            - ``"efficientnet_b5"`` — EfficientNet-B5 (efficient, modern)
-            - ``"convnext_small"`` — ConvNeXt-Small (modern CNN, excellent accuracy)
             
             Default is ``"resnet50"``.
         pretrained_backbone : bool, optional
@@ -574,7 +572,7 @@ class EAST:
         ...     train_anns=train_anns,
         ...     val_images=val_images,
         ...     val_anns=val_anns,
-        ...     backbone_name="efficientnet_b5",
+        ...     backbone_name="resnet50",
         ...     target_size=256,
         ...     epochs=20,
         ...     batch_size=4,
@@ -778,9 +776,9 @@ class EAST:
         ----------
         weights_path : str or Path
             Path to the PyTorch model weights file (.pth).
-        output_path : str or Path
+        output_path : str
             Path where the ONNX model will be saved (.onnx).
-        backbone_name : {"resnet50", "resnet101", "efficientnet_b5"}, optional
+        backbone_name : {"resnet50", "resnet101"}, optional
             Backbone architecture of the model. Must match the architecture
             used during training. Default is ``"resnet50"``.
         input_size : int, optional

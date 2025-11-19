@@ -1,6 +1,7 @@
 import os
 import time
 import csv
+import re
 from collections import Counter, defaultdict
 from manuscript.recognizers import TRBA
 from manuscript.recognizers._trba.training.metrics import (
@@ -8,8 +9,20 @@ from manuscript.recognizers._trba.training.metrics import (
     word_error_rate,
     compute_accuracy,
 )
+from manuscript.recognizers._trba.data.dataset import OCRDatasetAttn
+from manuscript.recognizers._trba.data.transforms import load_charset
 import Levenshtein
 from tqdm import tqdm
+
+
+def normalize_text_letters_only(text: str) -> str:
+    """
+    Нормализует текст: оставляет только буквы, приводит к нижнему регистру.
+    Удаляет пробелы, пунктуацию и цифры.
+    """
+    # Оставляем только буквы (латиница + кириллица + др. Unicode буквы)
+    letters_only = re.sub(r'[^a-zA-Zа-яА-ЯёЁ\u0080-\uFFFF]', '', text)
+    return letters_only.lower()
 
 
 # === Пути ===
@@ -19,68 +32,88 @@ datasets = [
         "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\img",
         "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\labels.csv",
     },
+    {
+        "image_dir": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\img",
+        "gt_path": r"C:\Users\USER\Desktop\archive_25_09\dataset\handwritten\val\labels.csv",
+    },
+    {
+        "image_dir": r"C:\shared\orig_cyrillic\test",
+        "gt_path": r"C:\shared\orig_cyrillic\test.tsv",  # Тот же файл что при обучении
+    },
+    {
+        "image_dir": r"C:\shared\school_notebooks_RU\school_notebooks_RU\val",
+        "gt_path": r"C:\shared\school_notebooks_RU\school_notebooks_RU\val_converted.csv",
+    },
 ]
 
-model_path = r"C:\Users\USER\manuscript-ocr\model.onnx"
-config_path = r"C:\Users\USER\manuscript-ocr\experiments\trba_exp_printed_lite256\config.json"
+model_path = r"C:\Users\USER\Desktop\trba_exp_lite\trba_exp_lite.onnx"
+config_path = r"C:\Users\USER\Desktop\trba_exp_lite\config.json"
+charset_path = r"C:\Users\USER\Desktop\trba_exp_lite\charset.txt"
 
 batch_size = 64
 
-# === Читаем GT-файлы из всех датасетов ===
-gt_data = {}
-total_gt_lines = 0
+# === Загружаем charset для создания датасетов ===
+print("📚 Загрузка charset...")
+itos, stoi = load_charset(charset_path)
+print(f"   Размер алфавита: {len(itos)} символов")
+
+# === Читаем данные используя тот же OCRDatasetAttn что и при обучении ===
+all_samples = []  # Список кортежей (image_path, label, dataset_idx)
+image_to_dataset = {}  # Маппинг: путь к изображению → индекс датасета
 
 for idx, dataset in enumerate(datasets, 1):
     image_dir = dataset["image_dir"]
     gt_path = dataset["gt_path"]
     
-    print(f"📂 Датасет {idx}: {os.path.basename(image_dir)}")
+    print(f"\n📂 Датасет {idx}: {os.path.basename(image_dir)}")
+    print(f"   CSV: {os.path.basename(gt_path)}")
     
-    dataset_gt = {}
-    with open(gt_path, "r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) >= 2:
-                fname = row[0].strip()
-                text = ",".join(row[1:]).strip()  # На случай если в тексте есть запятые
-                dataset_gt[fname] = text
+    # Создаём датасет с ТОЧНО ТЕМИ ЖЕ настройками что при обучении!
+    # ВАЖНО: strict_max_len=True и max_len=40 как при обучении
+    ds = OCRDatasetAttn(
+        csv_path=gt_path,
+        images_dir=image_dir,
+        stoi=stoi,
+        img_height=32,
+        img_max_width=256,  # Как в config.json
+        transform=None,
+        has_header=None,  # Автоопределение
+        encoding="utf-8",
+        delimiter=None,  # Автоопределение по расширению
+        strict_charset=False,  # Не фильтруем по алфавиту
+        validate_image=False,  # Не проверяем изображения
+        max_len=40,  # КАК ПРИ ОБУЧЕНИИ!
+        strict_max_len=True,  # КАК ПРИ ОБУЧЕНИИ! Фильтруем длинные тексты
+        num_workers=0
+    )
     
-    print(f"   Загружено {len(dataset_gt)} записей из {os.path.basename(gt_path)}")
-    total_gt_lines += len(dataset_gt)
+    print(f"   ✅ Загружено {len(ds)} валидных примеров")
     
-    # Добавляем в общий словарь с проверкой на дубликаты
-    for fname, text in dataset_gt.items():
-        if fname in gt_data:
-            print(f"   ⚠️  Дубликат файла: {fname} (будет использована последняя версия)")
-        gt_data[fname] = text
+    # Показываем статистику фильтрации (если были отбросы)
+    if hasattr(ds, '_reasons'):
+        total_filtered = sum(ds._reasons.values())
+        if total_filtered > 0:
+            print(f"   ⚠️  Отфильтровано {total_filtered} примеров:")
+            for reason, count in ds._reasons.items():
+                if count > 0:
+                    print(f"      - {reason}: {count}")
+    
+    # Сохраняем пути к изображениям и метки
+    for i in range(len(ds)):
+        img_path, label = ds.samples[i]
+        all_samples.append((img_path, label, idx))
+        image_to_dataset[img_path] = idx
 
-print(f"\n📄 Всего загружено {total_gt_lines} записей из {len(datasets)} датасетов(а)")
-print(f"📄 Уникальных файлов: {len(gt_data)}")
-
-# === Сканируем изображения из всех датасетов ===
-valid_ext = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-images = []
-
-for idx, dataset in enumerate(datasets, 1):
-    image_dir = dataset["image_dir"]
-    
-    dataset_images = [
-        os.path.join(image_dir, f)
-        for f in os.listdir(image_dir)
-        if os.path.splitext(f)[1].lower() in valid_ext
-    ]
-    
-    if not dataset_images:
-        print(f"⚠️  Датасет {idx}: В папке {image_dir} не найдено изображений!")
-    else:
-        print(f"📁 Датасет {idx}: Найдено {len(dataset_images)} изображений")
-        images.extend(dataset_images)
+# === Формируем списки для распознавания ===
+images = [sample[0] for sample in all_samples]
+gt_data = {os.path.basename(sample[0]): sample[1] for sample in all_samples}
 
 # === Ограничиваем количество изображений ===
-max_images = 1000
+max_images = 1000000000000
 if len(images) > max_images:
-    print(f"⚠️ Берём только первые {max_images} изображений из {len(images)}")
+    print(f"\n⚠️ Берём только первые {max_images} изображений из {len(images)}")
     images = images[:max_images]
+    all_samples = all_samples[:max_images]
 
 if not images:
     raise RuntimeError(f"❌ Не найдено изображений ни в одном датасете!")
@@ -88,7 +121,8 @@ if not images:
 print(f"\n📁 ИТОГО: {len(images)} изображений для распознавания")
 
 # === Инициализация модели ===
-recognizer = TRBA(model_path=model_path, config_path=config_path)
+print(f"\n🔧 Инициализация модели...")
+recognizer = TRBA(weights_path=model_path, config_path=config_path, charset_path=charset_path)
 
 # === Выбор режима декодирования ===
 # Доступные режимы: "greedy", "beam"
@@ -104,6 +138,7 @@ fps = 1.0 / avg_time if avg_time > 0 else float("inf")
 
 # === Сопоставляем с ground truth ===
 refs, hyps = [], []
+dataset_ids = []  # Индекс датасета для каждого примера
 total_cer, total_wer = 0.0, 0.0
 cer_count, wer_count = 0, 0
 error_details = []  # Для детального анализа ошибок
@@ -120,6 +155,7 @@ for path, result in zip(images, results):
 
     refs.append(ref_text)
     hyps.append(pred_text)
+    dataset_ids.append(image_to_dataset.get(path, 0))  # Запоминаем датасет
 
     cer = character_error_rate(ref_text, pred_text)
     wer = word_error_rate(ref_text, pred_text)
@@ -137,7 +173,8 @@ for path, result in zip(images, results):
             'hyp': pred_text,
             'cer': cer,
             'wer': wer,
-            'confidence': score
+            'confidence': score,
+            'dataset_id': image_to_dataset.get(path, 0)
         })
 
     print(
@@ -150,18 +187,125 @@ acc = compute_accuracy(refs, hyps)
 # Регистронезависимая точность (case-insensitive)
 acc_case_insensitive = sum(1 for r, h in zip(refs, hyps) if r.lower() == h.lower()) / max(len(refs), 1)
 
+# Точность только по буквам (без пунктуации, пробелов, регистронезависимо)
+acc_letters_only = sum(
+    1 for r, h in zip(refs, hyps) 
+    if normalize_text_letters_only(r) == normalize_text_letters_only(h)
+) / max(len(refs), 1)
+
 # Точность с учетом только регистра (когда все символы верны, но регистр другой)
 case_only_errors = sum(1 for r, h in zip(refs, hyps) if r.lower() == h.lower() and r != h)
 
 avg_cer = total_cer / max(cer_count, 1)
 avg_wer = total_wer / max(wer_count, 1)
 
-print("\n=== Сводка ===")
-print(f"Accuracy (case-sensitive):     {acc*100:.2f}%")
-print(f"Accuracy (case-insensitive):   {acc_case_insensitive*100:.2f}%")
-print(f"Case-only errors:              {case_only_errors} ({case_only_errors/max(len(refs), 1)*100:.2f}%)")
-print(f"Avg CER:  {avg_cer:.4f}")
-print(f"Avg WER:  {avg_wer:.4f}")
+# === Вычисление метрик по датасетам ===
+def compute_dataset_metrics(refs, hyps, dataset_ids, dataset_idx):
+    """Вычисляет метрики для конкретного датасета"""
+    # Фильтруем только примеры из этого датасета
+    dataset_refs = [r for r, h, d in zip(refs, hyps, dataset_ids) if d == dataset_idx]
+    dataset_hyps = [h for r, h, d in zip(refs, hyps, dataset_ids) if d == dataset_idx]
+    
+    if not dataset_refs:
+        return None
+    
+    # Базовые метрики
+    acc = compute_accuracy(dataset_refs, dataset_hyps)
+    acc_ci = sum(1 for r, h in zip(dataset_refs, dataset_hyps) if r.lower() == h.lower()) / len(dataset_refs)
+    acc_letters = sum(
+        1 for r, h in zip(dataset_refs, dataset_hyps) 
+        if normalize_text_letters_only(r) == normalize_text_letters_only(h)
+    ) / len(dataset_refs)
+    
+    # CER и WER
+    total_cer = sum(character_error_rate(r, h) for r, h in zip(dataset_refs, dataset_hyps))
+    total_wer = sum(word_error_rate(r, h) for r, h in zip(dataset_refs, dataset_hyps))
+    avg_cer = total_cer / len(dataset_refs)
+    avg_wer = total_wer / len(dataset_refs)
+    
+    # CER case-insensitive
+    total_cer_ci = sum(character_error_rate(r.lower(), h.lower()) for r, h in zip(dataset_refs, dataset_hyps))
+    avg_cer_ci = total_cer_ci / len(dataset_refs)
+    
+    # CER letters only
+    total_cer_letters = 0.0
+    for r, h in zip(dataset_refs, dataset_hyps):
+        r_letters = normalize_text_letters_only(r)
+        h_letters = normalize_text_letters_only(h)
+        if r_letters:
+            total_cer_letters += character_error_rate(r_letters, h_letters)
+    avg_cer_letters = total_cer_letters / len(dataset_refs)
+    
+    return {
+        'count': len(dataset_refs),
+        'acc': acc,
+        'acc_ci': acc_ci,
+        'acc_letters': acc_letters,
+        'cer': avg_cer,
+        'cer_ci': avg_cer_ci,
+        'cer_letters': avg_cer_letters,
+        'wer': avg_wer
+    }
+
+print("\n" + "="*120)
+print("📊 МЕТРИКИ ПО ДАТАСЕТАМ")
+print("="*120)
+
+# Вычисляем метрики для каждого датасета
+dataset_metrics = {}
+for idx in range(1, len(datasets) + 1):
+    metrics = compute_dataset_metrics(refs, hyps, dataset_ids, idx)
+    if metrics:
+        dataset_metrics[idx] = metrics
+
+# Общие метрики
+overall_metrics = {
+    'count': len(refs),
+    'acc': acc,
+    'acc_ci': acc_case_insensitive,
+    'acc_letters': acc_letters_only,
+    'cer': avg_cer,
+    'wer': avg_wer
+}
+
+# Вычисляем общие CER case-insensitive и letters only для таблицы
+total_cer_ci = sum(character_error_rate(r.lower(), h.lower()) for r, h in zip(refs, hyps))
+overall_metrics['cer_ci'] = total_cer_ci / max(len(refs), 1)
+
+total_cer_letters = 0.0
+for r, h in zip(refs, hyps):
+    r_letters = normalize_text_letters_only(r)
+    h_letters = normalize_text_letters_only(h)
+    if r_letters:
+        total_cer_letters += character_error_rate(r_letters, h_letters)
+overall_metrics['cer_letters'] = total_cer_letters / max(len(refs), 1)
+
+# Печатаем таблицу
+print(f"\n{'Датасет':<30} {'Count':>8} {'Acc':>8} {'Acc-CI':>8} {'Acc-L':>8} {'CER':>8} {'CER-CI':>8} {'CER-L':>8} {'WER':>8}")
+print("-" * 120)
+
+for idx in sorted(dataset_metrics.keys()):
+    dataset = datasets[idx - 1]
+    dataset_name = os.path.basename(dataset["image_dir"])[:28]
+    m = dataset_metrics[idx]
+    print(f"{dataset_name:<30} {m['count']:>8} {m['acc']*100:>7.2f}% {m['acc_ci']*100:>7.2f}% {m['acc_letters']*100:>7.2f}% {m['cer']:>8.4f} {m['cer_ci']:>8.4f} {m['cer_letters']:>8.4f} {m['wer']:>8.4f}")
+
+print("-" * 120)
+m = overall_metrics
+print(f"{'OVERALL':<30} {m['count']:>8} {m['acc']*100:>7.2f}% {m['acc_ci']*100:>7.2f}% {m['acc_letters']*100:>7.2f}% {m['cer']:>8.4f} {m['cer_ci']:>8.4f} {m['cer_letters']:>8.4f} {m['wer']:>8.4f}")
+print("="*120)
+
+print("\nЛегенда:")
+print("  Acc      - Accuracy (case-sensitive)")
+print("  Acc-CI   - Accuracy (case-insensitive)")
+print("  Acc-L    - Accuracy (letters only, case-insensitive)")
+print("  CER      - Character Error Rate")
+print("  CER-CI   - CER (case-insensitive)")
+print("  CER-L    - CER (letters only)")
+print("  WER      - Word Error Rate")
+
+print("\n=== Дополнительная информация ===")
+print(f"Case-only errors:                        {case_only_errors} ({case_only_errors/max(len(refs), 1)*100:.2f}%)")
 print(f"Processed {len(images)} images in {total_time:.3f} sec")
 print(f"Average per image: {avg_time:.3f} sec ({fps:.1f} FPS)")
 
@@ -267,15 +411,32 @@ if error_details:
     print(f"   Правильных: {len(refs) - len(error_details)}")
     print(f"   С ошибками: {len(error_details)} ({len(error_details)/len(refs)*100:.1f}%)")
     
+    # Статистика ошибок по датасетам
+    print(f"\n   По датасетам:")
+    for idx in sorted(dataset_metrics.keys()):
+        dataset = datasets[idx - 1]
+        dataset_name = os.path.basename(dataset["image_dir"])
+        dataset_errors = [e for e in error_details if e['dataset_id'] == idx]
+        dataset_total = dataset_metrics[idx]['count']
+        print(f"      {dataset_name}: {len(dataset_errors)}/{dataset_total} ошибок ({len(dataset_errors)/max(dataset_total, 1)*100:.1f}%)")
+    
     # Регистронезависимые метрики
     total_cer_ci = 0.0
     total_wer_ci = 0.0
+    total_cer_letters = 0.0
     for ref, hyp in zip(refs, hyps):
         total_cer_ci += character_error_rate(ref.lower(), hyp.lower())
         total_wer_ci += word_error_rate(ref.lower(), hyp.lower())
+        
+        # Метрики только по буквам
+        ref_letters = normalize_text_letters_only(ref)
+        hyp_letters = normalize_text_letters_only(hyp)
+        if ref_letters:  # Избегаем деления на ноль для пустых строк
+            total_cer_letters += character_error_rate(ref_letters, hyp_letters)
     
     avg_cer_ci = total_cer_ci / max(len(refs), 1)
     avg_wer_ci = total_wer_ci / max(len(refs), 1)
+    avg_cer_letters = total_cer_letters / max(len(refs), 1)
     
     print(f"\n   📏 Метрики (case-sensitive):")
     print(f"      Accuracy: {acc*100:.2f}%")
@@ -288,6 +449,11 @@ if error_details:
     print(f"      WER: {avg_wer_ci:.4f}")
     print(f"      Улучшение CER: {(avg_cer - avg_cer_ci)/avg_cer*100:.1f}%")
     print(f"      Улучшение WER: {(avg_wer - avg_wer_ci)/avg_wer*100:.1f}%")
+    
+    print(f"\n   📏 Метрики (letters only, case-insensitive):")
+    print(f"      Accuracy: {acc_letters_only*100:.2f}%")
+    print(f"      CER: {avg_cer_letters:.4f}")
+    print(f"      Улучшение CER: {(avg_cer - avg_cer_letters)/avg_cer*100:.1f}%")
     
     # 2. Типы ошибок
     print(f"\n2️⃣ ТИПЫ ОШИБОК:")

@@ -446,7 +446,7 @@ class TRBA:
         cnn_backbone: str = "seresnet31",
         ctc_weight: float = 0.3,
         ctc_weight_decay_epochs: int = 50,
-        ctc_weight_min: float = 0.0,
+        ctc_weight_min: float = 0.01,
         max_grad_norm: float = 5.0,
         batch_size: int = 32,
         epochs: int = 20,
