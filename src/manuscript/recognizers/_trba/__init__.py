@@ -257,7 +257,10 @@ class TRBA:
         if isinstance(image, str):
             if not os.path.exists(image):
                 raise FileNotFoundError(f"Image file not found: {image}")
-            img = cv2.imread(image)
+            # Read with Unicode support (кириллица в путях)
+            with open(image, 'rb') as f:
+                arr = np.frombuffer(f.read(), dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if img is None:
                 raise ValueError(f"Cannot read image: {image}")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -828,10 +831,11 @@ class TRBA:
         -----
         The exported ONNX model has one output:
 
-        - ``logits``: Character predictions with shape ``(batch, max_length, num_classes)``
+        - ``logits``: Character predictions with shape ``(batch, max_length+1, num_classes)``
 
         The model uses greedy decoding (argmax) and supports dynamic batch size.
-        The sequence length is fixed to ``max_length`` from the config.
+        The sequence length is fixed to ``max_length + 1`` from the config (same as PyTorch
+        inference mode for compatibility).
 
         Architecture exported:
         - CNN backbone (SE-ResNet-31 or SE-ResNet-31-Lite)
@@ -954,8 +958,12 @@ class TRBA:
         print("[OK] Model loaded")
 
         # Create ONNX wrapper
+        # ВАЖНО: используем max_length + 1, как в PyTorch режиме (greedy_decode с onnx_mode=False)
+        # Это обеспечивает одинаковое поведение PTH и ONNX моделей
         print(f"\nCreating ONNX wrapper...")
-        onnx_model = TRBAONNXWrapper(model, max_length=max_length)
+        print(f"   max_length from config: {max_length}")
+        print(f"   ONNX will use: {max_length + 1} steps (max_length + 1 for compatibility)")
+        onnx_model = TRBAONNXWrapper(model, max_length=max_length + 1)
         onnx_model.eval()
 
         # Create dummy input
@@ -969,7 +977,7 @@ class TRBA:
             output = onnx_model(dummy_input)
 
         print(f"Output shape: {output.shape}")
-        print(f"Expected: [1, {max_length}, {num_classes}]")
+        print(f"Expected: [1, {max_length + 1}, {num_classes}] (max_length + 1 steps)")
 
         # Export to ONNX
         print(f"\nExporting to ONNX (opset {opset_version})...")

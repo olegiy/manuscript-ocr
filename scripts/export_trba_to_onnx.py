@@ -88,10 +88,10 @@ def example_usage():
     """
     
     # ========== Пример 1: Базовый экспорт ==========
-    weights_path = r"C:\Users\USER\Desktop\trba_exp_1_64\trba_exp_1_64.pth"
-    config_path = r"C:\Users\USER\Desktop\trba_exp_1_64\trba_exp_1_64.json"
-    charset_path = r"C:\Users\USER\Desktop\trba_exp_1_64\charset.txt"  # charset из папки эксперимента
-    output_path = r"C:\Users\USER\Desktop\trba_exp_1_64\trba_exp_1_64.onnx"
+    weights_path = r"C:\Users\USER\Desktop\trba_exp_lite\best_acc_weights.pth"
+    config_path = r"C:\Users\USER\Desktop\trba_exp_lite\config.json"
+    charset_path = r"C:\Users\USER\Desktop\trba_exp_lite\charset.txt"  # charset из папки эксперимента
+    output_path = r"C:\Users\USER\Desktop\trba_exp_lite\trba_exp_lite.onnx"
     
     TRBA.export_to_onnx(
         weights_path=weights_path,

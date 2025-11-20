@@ -1,18 +1,33 @@
+"""
+Инференс TRBA модели с использованием PTH весов и детальными метриками.
+Аналогично src/trba_metrics.py, но с прямой загрузкой PyTorch модели.
+"""
+
 import os
 import time
 import csv
-from collections import Counter, defaultdict
-from manuscript.recognizers import TRBA
+import json
+from collections import Counter
+from pathlib import Path
+import torch
+import cv2
+import numpy as np
+from PIL import Image
+import Levenshtein
+from tqdm import tqdm
+
+from manuscript.recognizers._trba.model.model import TRBAModel
+from manuscript.recognizers._trba.data.transforms import load_charset, get_val_transform
 from manuscript.recognizers._trba.training.metrics import (
     character_error_rate,
     word_error_rate,
     compute_accuracy,
 )
-import Levenshtein
-from tqdm import tqdm
 
+# ============================================
+# КОНФИГУРАЦИЯ
+# ============================================
 
-# === Пути ===
 # Пути к модели и данным
 WEIGHTS_PATH = r"C:\Users\USER\Desktop\trba_exp_lite\best_acc_weights.pth"
 CONFIG_PATH = r"C:\Users\USER\Desktop\trba_exp_lite\config.json"
@@ -38,13 +53,99 @@ datasets = [
     },
 ]
 
+# Параметры инференса
+BATCH_SIZE = 64
+MAX_IMAGES = 10000000000000000  # Ограничение на количество изображений
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-model_path = r"C:\Users\USER\Desktop\trba_exp_lite\trba_exp_lite.onnx"
-config_path = r"C:\Users\USER\Desktop\trba_exp_lite\config.json"
+# Директория для сохранения отчетов
+OUTPUT_DIR = Path(WEIGHTS_PATH).parent
 
-batch_size = 64
+print("=" * 80)
+print("🚀 TRBA INFERENCE WITH PTH WEIGHTS + METRICS")
+print("=" * 80)
+print(f"Weights: {WEIGHTS_PATH}")
+print(f"Config:  {CONFIG_PATH}")
+print(f"Charset: {CHARSET_PATH}")
+print(f"Device:  {DEVICE}")
+print(f"Batch size: {BATCH_SIZE}")
+print("=" * 80)
+print()
 
-# === Читаем GT-файлы из всех датасетов ===
+# ============================================
+# ЗАГРУЗКА КОНФИГУРАЦИИ
+# ============================================
+
+print("📄 Loading configuration...")
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+img_h = config.get("img_h", 64)
+img_w = config.get("img_w", 256)
+max_len = config.get("max_len", 40)
+hidden_size = config.get("hidden_size", 256)
+num_encoder_layers = config.get("num_encoder_layers", 2)
+cnn_in_channels = config.get("cnn_in_channels", 3)
+cnn_out_channels = config.get("cnn_out_channels", 512)
+cnn_backbone = config.get("cnn_backbone", "seresnet31")
+
+print(f"   Image size: {img_h}×{img_w}")
+print(f"   Max length: {max_len}")
+print(f"   Hidden size: {hidden_size}")
+print(f"   Encoder layers: {num_encoder_layers}")
+print(f"   CNN backbone: {cnn_backbone}")
+print(f"   CNN out channels: {cnn_out_channels}")
+print()
+
+# ============================================
+# ЗАГРУЗКА CHARSET
+# ============================================
+
+print("📚 Loading charset...")
+itos, stoi = load_charset(CHARSET_PATH)
+num_classes = len(itos)
+print(f"   Total classes: {num_classes}")
+print(f"   Special tokens: PAD={stoi['<PAD>']}, SOS={stoi['<SOS>']}, EOS={stoi['<EOS>']}")
+print()
+
+# ============================================
+# СОЗДАНИЕ И ЗАГРУЗКА МОДЕЛИ
+# ============================================
+
+print("🏗️  Building model...")
+model = TRBAModel(
+    num_classes=num_classes,
+    hidden_size=hidden_size,
+    num_encoder_layers=num_encoder_layers,
+    img_h=img_h,
+    img_w=img_w,
+    cnn_in_channels=cnn_in_channels,
+    cnn_out_channels=cnn_out_channels,
+    cnn_backbone=cnn_backbone,
+    sos_id=stoi["<SOS>"],
+    eos_id=stoi["<EOS>"],
+    pad_id=stoi["<PAD>"],
+    blank_id=stoi.get("<BLANK>", None),
+    use_ctc_head=False,  # Только attention для инференса
+    use_attention_head=True,
+)
+
+print(f"   Loading weights from {WEIGHTS_PATH}...")
+state_dict = torch.load(WEIGHTS_PATH, map_location=DEVICE)
+model.load_state_dict(state_dict, strict=False)
+model.to(DEVICE)
+model.eval()
+
+# Подсчет параметров
+total_params = sum(p.numel() for p in model.parameters())
+print(f"   Total parameters: {total_params:,} ({total_params*4/(1024*1024):.2f} MB)")
+print()
+
+# ============================================
+# ЗАГРУЗКА GROUND TRUTH
+# ============================================
+
+print("📂 Loading ground truth data...")
 gt_data = {}
 total_gt_lines = 0
 
@@ -52,7 +153,7 @@ for idx, dataset in enumerate(datasets, 1):
     image_dir = dataset["image_dir"]
     gt_path = dataset["gt_path"]
     
-    print(f"📂 Датасет {idx}: {os.path.basename(image_dir)}")
+    print(f"   Dataset {idx}: {os.path.basename(image_dir)}")
     
     dataset_gt = {}
     with open(gt_path, "r", encoding="utf-8") as f:
@@ -60,22 +161,26 @@ for idx, dataset in enumerate(datasets, 1):
         for row in reader:
             if len(row) >= 2:
                 fname = row[0].strip()
-                text = ",".join(row[1:]).strip()  # На случай если в тексте есть запятые
+                text = ",".join(row[1:]).strip()
                 dataset_gt[fname] = text
     
-    print(f"   Загружено {len(dataset_gt)} записей из {os.path.basename(gt_path)}")
+    print(f"      Loaded {len(dataset_gt)} entries from {os.path.basename(gt_path)}")
     total_gt_lines += len(dataset_gt)
     
-    # Добавляем в общий словарь с проверкой на дубликаты
     for fname, text in dataset_gt.items():
         if fname in gt_data:
-            print(f"   ⚠️  Дубликат файла: {fname} (будет использована последняя версия)")
+            print(f"      ⚠️  Duplicate file: {fname} (using last version)")
         gt_data[fname] = text
 
-print(f"\n📄 Всего загружено {total_gt_lines} записей из {len(datasets)} датасетов(а)")
-print(f"📄 Уникальных файлов: {len(gt_data)}")
+print(f"\n   Total GT entries: {total_gt_lines}")
+print(f"   Unique files: {len(gt_data)}")
+print()
 
-# === Сканируем изображения из всех датасетов ===
+# ============================================
+# СКАНИРОВАНИЕ ИЗОБРАЖЕНИЙ
+# ============================================
+
+print("📁 Scanning images...")
 valid_ext = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 images = []
 
@@ -89,36 +194,120 @@ for idx, dataset in enumerate(datasets, 1):
     ]
     
     if not dataset_images:
-        print(f"⚠️  Датасет {idx}: В папке {image_dir} не найдено изображений!")
+        print(f"   ⚠️  Dataset {idx}: No images found in {image_dir}!")
     else:
-        print(f"📁 Датасет {idx}: Найдено {len(dataset_images)} изображений")
+        print(f"   Dataset {idx}: Found {len(dataset_images)} images")
         images.extend(dataset_images)
 
-# === Ограничиваем количество изображений ===
-max_images = 100000000000000
-if len(images) > max_images:
-    print(f"⚠️ Берём только первые {max_images} изображений из {len(images)}")
-    images = images[:max_images]
+if len(images) > MAX_IMAGES:
+    print(f"   ⚠️  Taking only first {MAX_IMAGES} images from {len(images)}")
+    images = images[:MAX_IMAGES]
 
 if not images:
-    raise RuntimeError(f"❌ Не найдено изображений ни в одном датасете!")
+    raise RuntimeError(f"❌ No images found in any dataset!")
 
-print(f"\n📁 ИТОГО: {len(images)} изображений для распознавания")
+print(f"\n   TOTAL: {len(images)} images for recognition")
+print()
 
-# === Инициализация модели ===
-recognizer = TRBA(weights_path=model_path, config_path=config_path)
+# ============================================
+# ПОДГОТОВКА ТРАНСФОРМАЦИЙ
+# ============================================
 
-# === Выбор режима декодирования ===
-# Доступные режимы: "greedy", "beam"
+transform = get_val_transform(img_h=img_h, img_w=img_w)
 
-# === Распознаём ===
+def imread_unicode(path):
+    """Читает изображение с Unicode путём (поддержка кириллицы)"""
+    with open(path, 'rb') as f:
+        arr = np.frombuffer(f.read(), dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    return img
+
+def preprocess_image(image_path):
+    """Загрузка и предобработка изображения"""
+    img = imread_unicode(image_path)
+    if img is None:
+        raise ValueError(f"Failed to load image: {image_path}")
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    transformed = transform(image=img)
+    return transformed["image"]  # [3, H, W]
+
+# ============================================
+# INFERENCE
+# ============================================
+
+print("🔮 Running inference...")
+print(f"   Processing {len(images)} images in batches of {BATCH_SIZE}...")
+print()
+
+results = []
 start_time = time.perf_counter()
-results = recognizer.predict(images=images, batch_size=batch_size)
+
+with torch.no_grad():
+    for i in tqdm(range(0, len(images), BATCH_SIZE), desc="Processing"):
+        batch_images = images[i : i + BATCH_SIZE]
+        
+        # Загрузка и предобработка батча
+        batch_tensors = []
+        for img_path in batch_images:
+            try:
+                tensor = preprocess_image(img_path)
+                batch_tensors.append(tensor)
+            except Exception as e:
+                print(f"\n⚠️  Error loading {img_path}: {e}")
+                # Добавляем пустой результат
+                results.append({"text": "", "confidence": 0.0})
+                continue
+        
+        if not batch_tensors:
+            continue
+        
+        # Создаем батч [B, 3, H, W]
+        batch = torch.stack(batch_tensors).to(DEVICE)
+        
+        # Инференс
+        output = model(batch, is_train=False, mode="attention", batch_max_length=max_len)
+        preds = output["attention_preds"]  # [B, T]
+        logits = output["attention_logits"]  # [B, T, num_classes]
+        
+        # Декодирование
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        preds = preds.cpu().numpy()
+        
+        for j in range(len(batch_tensors)):
+            pred_row = preds[j]  # [max_length]
+            
+            # Декодирование текста
+            decoded_chars = []
+            for token_id in pred_row:
+                if token_id == stoi["<EOS>"]:
+                    break
+                if token_id not in [stoi["<PAD>"], stoi["<SOS>"]]:
+                    if token_id < len(itos):
+                        decoded_chars.append(itos[token_id])
+            
+            text = "".join(decoded_chars)
+            
+            # Расчет уверенности
+            seq_probs = []
+            for t, token_id in enumerate(pred_row):
+                if token_id == stoi["<EOS>"]:
+                    break
+                if token_id not in [stoi["<PAD>"], stoi["<SOS>"]]:
+                    seq_probs.append(probs[j, t, token_id])
+            
+            confidence = float(np.mean(seq_probs)) if seq_probs else 0.0
+            
+            results.append({"text": text, "confidence": confidence})
+
 end_time = time.perf_counter()
-print(results)
 total_time = end_time - start_time
 avg_time = total_time / len(images)
 fps = 1.0 / avg_time if avg_time > 0 else float("inf")
+
+print(f"\n✅ Inference completed!")
+print(f"   Total time: {total_time:.3f}s")
+print(f"   Average per image: {avg_time:.3f}s ({fps:.1f} FPS)")
+print()
 
 # ============================================
 # ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ ТОЛЬКО БУКВ И ЦИФР
@@ -138,11 +327,19 @@ def filter_chars_only(text):
     )
     return ''.join(c for c in text if c in allowed_chars)
 
-# === Сопоставляем с ground truth ===
+# ============================================
+# СОПОСТАВЛЕНИЕ С GROUND TRUTH И РАСЧЕТ МЕТРИК
+# ============================================
+
+print("=" * 80)
+print("📊 CALCULATING METRICS")
+print("=" * 80)
+print()
+
 refs, hyps = [], []
 total_cer, total_wer = 0.0, 0.0
 cer_count, wer_count = 0, 0
-error_details = []  # Для детального анализа ошибок
+error_details = []
 
 # Создаем уникальные имена для датасетов и нормализуем пути
 dataset_mapping = {}  # путь к изображению -> уникальное имя датасета
@@ -173,12 +370,14 @@ for idx, dataset in enumerate(datasets, 1):
         'count': 0
     }
 
-print("\n=== Результаты распознавания ===")
+print("Results:")
+print("-" * 80)
 for path, result in zip(images, results):
     pred_text = result["text"]
     score = result["confidence"]
     fname = os.path.basename(path)
     ref_text = gt_data.get(fname)
+    
     if ref_text is None:
         print(f"{fname:40s} → {pred_text:20s} (no GT)")
         continue
@@ -207,7 +406,7 @@ for path, result in zip(images, results):
         dataset_results[dataset_name]['total_wer'] += wer
         dataset_results[dataset_name]['count'] += 1
     
-    # Сохраняем детали для анализа
+    # Сохраняем детали ошибок
     if ref_text != pred_text:
         error_details.append({
             'fname': fname,
@@ -218,26 +417,30 @@ for path, result in zip(images, results):
             'confidence': score
         })
 
-    print(
-        f"{fname:40s} → {pred_text:20s} | GT: {ref_text:20s} | CER={cer:.3f} | WER={wer:.3f}"
-    )
+    print(f"{fname:40s} → {pred_text:20s} | GT: {ref_text:20s} | CER={cer:.3f} | WER={wer:.3f}")
 
-# === Метрики ===
+print("-" * 80)
+print()
+
+# ============================================
+# ОСНОВНЫЕ МЕТРИКИ
+# ============================================
+
 acc = compute_accuracy(refs, hyps)
-
-# Регистронезависимая точность (case-insensitive)
 acc_case_insensitive = sum(1 for r, h in zip(refs, hyps) if r.lower() == h.lower()) / max(len(refs), 1)
 
-# Точность только по буквам и цифрам (chars only - без спецсимволов и пробелов)
+# Точность только по буквам и цифрам (chars only)
 refs_chars_only = [filter_chars_only(r) for r in refs]
 hyps_chars_only = [filter_chars_only(h) for h in hyps]
 acc_chars_only = sum(1 for r, h in zip(refs_chars_only, hyps_chars_only) if r.lower() == h.lower()) / max(len(refs), 1)
 
-# Точность с учетом только регистра (когда все символы верны, но регистр другой)
 case_only_errors = sum(1 for r, h in zip(refs, hyps) if r.lower() == h.lower() and r != h)
-
 avg_cer = total_cer / max(cer_count, 1)
 avg_wer = total_wer / max(wer_count, 1)
+
+# CER/WER для case-insensitive
+total_cer_ci = sum(character_error_rate(r.lower(), h.lower()) for r, h in zip(refs, hyps)) / max(len(refs), 1)
+total_wer_ci = sum(word_error_rate(r.lower(), h.lower()) for r, h in zip(refs, hyps)) / max(len(refs), 1)
 
 # CER/WER для chars only (пропускаем пары с пустыми строками)
 total_cer_chars_only = 0.0
@@ -262,10 +465,12 @@ for r, h in zip(refs_chars_only, hyps_chars_only):
     total_wer_chars_only += word_error_rate(r, h)
     chars_only_count += 1
 
-avg_cer_chars_only = total_cer_chars_only / max(chars_only_count, 1)
-avg_wer_chars_only = total_wer_chars_only / max(chars_only_count, 1)
+total_cer_chars_only = total_cer_chars_only / max(chars_only_count, 1)
+total_wer_chars_only = total_wer_chars_only / max(chars_only_count, 1)
 
-print("\n=== Сводка ===")
+print("=" * 80)
+print("📈 SUMMARY METRICS")
+print("=" * 80)
 print(f"Accuracy (case-sensitive):     {acc*100:.2f}%")
 print(f"Accuracy (case-insensitive):   {acc_case_insensitive*100:.2f}%")
 print(f"Accuracy (chars only):         {acc_chars_only*100:.2f}%")
@@ -274,14 +479,16 @@ print(f"Avg CER:  {avg_cer:.4f}")
 print(f"Avg WER:  {avg_wer:.4f}")
 print(f"Processed {len(images)} images in {total_time:.3f} sec")
 print(f"Average per image: {avg_time:.3f} sec ({fps:.1f} FPS)")
+print("=" * 80)
+print()
 
 # ============================================
 # ТАБЛИЦА МЕТРИК ПО ДАТАСЕТАМ
 # ============================================
 
-print("\n" + "="*100)
+print("=" * 100)
 print("📊 МЕТРИКИ ПО ДАТАСЕТАМ")
-print("="*100)
+print("=" * 100)
 
 # Подготовка данных для таблицы
 metrics_table = []
@@ -345,10 +552,6 @@ for dataset_name, data in dataset_results.items():
     })
 
 # Добавляем общую строку (TOTAL)
-# Case-insensitive метрики для всех данных
-total_cer_ci = sum(character_error_rate(r.lower(), h.lower()) for r, h in zip(refs, hyps)) / max(len(refs), 1)
-total_wer_ci = sum(word_error_rate(r.lower(), h.lower()) for r, h in zip(refs, hyps)) / max(len(refs), 1)
-
 metrics_table.append({
     'Dataset': 'TOTAL',
     'Count': len(refs),
@@ -357,10 +560,10 @@ metrics_table.append({
     'Acc (CO)': acc_chars_only,
     'CER (CS)': avg_cer,
     'CER (CI)': total_cer_ci,
-    'CER (CO)': avg_cer_chars_only,
+    'CER (CO)': total_cer_chars_only,
     'WER (CS)': avg_wer,
     'WER (CI)': total_wer_ci,
-    'WER (CO)': avg_wer_chars_only,
+    'WER (CO)': total_wer_chars_only,
 })
 
 # Вывод таблицы
@@ -376,7 +579,7 @@ for row in metrics_table:
           f"{row['WER (CS)']:>8.4f} {row['WER (CI)']:>8.4f} {row['WER (CO)']:>8.4f}")
 
 # Сохранение таблицы в CSV
-csv_output_path = os.path.join(os.path.dirname(model_path), "metrics_by_dataset.csv")
+csv_output_path = OUTPUT_DIR / "metrics_by_dataset.csv"
 with open(csv_output_path, "w", newline="", encoding="utf-8") as csvfile:
     writer = csv.DictWriter(csvfile, fieldnames=[
         'Dataset', 'Count', 
@@ -389,7 +592,8 @@ with open(csv_output_path, "w", newline="", encoding="utf-8") as csvfile:
         writer.writerow(row)
 
 print(f"\n💾 Таблица метрик сохранена: {csv_output_path}")
-print("="*100)
+print("=" * 100)
+print()
 
 # ============================================
 # ДЕТАЛЬНЫЙ АНАЛИЗ ОШИБОК
@@ -397,22 +601,18 @@ print("="*100)
 
 def analyze_character_errors(refs, hyps):
     """Анализ ошибок на уровне символов"""
-    
-    substitutions = Counter()  # (правильный, ошибочный)
-    insertions = Counter()     # вставленный символ
-    deletions = Counter()      # удалённый символ
-    
-    error_positions = {'start': 0, 'middle': 0, 'end': 0}  # Позиция ошибок
+    substitutions = Counter()
+    insertions = Counter()
+    deletions = Counter()
+    error_positions = {'start': 0, 'middle': 0, 'end': 0}
     
     for ref, hyp in zip(refs, hyps):
         if ref == hyp:
             continue
             
-        # Используем операции Levenshtein для детального анализа
         ops = Levenshtein.editops(ref, hyp)
         
         for op_type, ref_pos, hyp_pos in ops:
-            # Определяем позицию ошибки в слове
             word_len = len(ref)
             if ref_pos < word_len * 0.2:
                 error_positions['start'] += 1
@@ -437,21 +637,12 @@ def analyze_character_errors(refs, hyps):
 
 def analyze_word_lengths(error_details):
     """Анализ длины слов с ошибками"""
-    error_lengths = []
-    correct_lengths = []
-    
-    for detail in error_details:
-        error_lengths.append(len(detail['ref']))
-    
-    return error_lengths
+    return [len(detail['ref']) for detail in error_details]
 
 
 def analyze_error_types(error_details):
     """Анализ типов ошибок"""
-    
     total_errors = len(error_details)
-    
-    # Классификация ошибок
     length_mismatch = 0
     case_errors = 0
     similar_chars = 0
@@ -466,7 +657,6 @@ def analyze_error_types(error_details):
         elif ref.lower() == hyp.lower():
             case_errors += 1
         else:
-            # Проверяем схожесть
             distance = Levenshtein.distance(ref, hyp)
             if distance <= 2:
                 similar_chars += 1
@@ -483,79 +673,73 @@ def analyze_error_types(error_details):
 
 
 if error_details:
-    print("\n" + "="*80)
-    print("📊 ДЕТАЛЬНЫЙ АНАЛИЗ ОШИБОК")
-    print("="*80)
+    print("=" * 80)
+    print("📊 DETAILED ERROR ANALYSIS")
+    print("=" * 80)
     
-    # 1. Общая статистика ошибок
-    print(f"\n1️⃣ ОБЩАЯ СТАТИСТИКА:")
-    print(f"   Всего примеров: {len(refs)}")
-    print(f"   Правильных: {len(refs) - len(error_details)}")
-    print(f"   С ошибками: {len(error_details)} ({len(error_details)/len(refs)*100:.1f}%)")
+    # 1. Общая статистика
+    print(f"\n1️⃣ GENERAL STATISTICS:")
+    print(f"   Total examples: {len(refs)}")
+    print(f"   Correct: {len(refs) - len(error_details)}")
+    print(f"   With errors: {len(error_details)} ({len(error_details)/len(refs)*100:.1f}%)")
     
-    # Регистронезависимые метрики (уже посчитаны выше)
-    
-    print(f"\n   📏 Метрики (case-sensitive):")
+    print(f"\n   📏 Metrics (case-sensitive):")
     print(f"      Accuracy: {acc*100:.2f}%")
     print(f"      CER: {avg_cer:.4f}")
     print(f"      WER: {avg_wer:.4f}")
     
-    print(f"\n   📏 Метрики (case-insensitive):")
+    print(f"\n   📏 Metrics (case-insensitive):")
     print(f"      Accuracy: {acc_case_insensitive*100:.2f}%")
     print(f"      CER: {total_cer_ci:.4f}")
     print(f"      WER: {total_wer_ci:.4f}")
     if avg_cer > 0:
-        print(f"      Улучшение CER: {(avg_cer - total_cer_ci)/avg_cer*100:.1f}%")
+        print(f"      CER improvement: {(avg_cer - total_cer_ci)/avg_cer*100:.1f}%")
     if avg_wer > 0:
-        print(f"      Улучшение WER: {(avg_wer - total_wer_ci)/avg_wer*100:.1f}%")
+        print(f"      WER improvement: {(avg_wer - total_wer_ci)/avg_wer*100:.1f}%")
     
-    print(f"\n   📏 Метрики (chars only - без спецсимволов и пробелов):")
+    print(f"\n   📏 Metrics (chars only - no special chars/spaces):")
     print(f"      Accuracy: {acc_chars_only*100:.2f}%")
-    print(f"      CER: {avg_cer_chars_only:.4f}")
-    print(f"      WER: {avg_wer_chars_only:.4f}")
+    print(f"      CER: {total_cer_chars_only:.4f}")
+    print(f"      WER: {total_wer_chars_only:.4f}")
     if avg_cer > 0:
-        print(f"      Улучшение CER: {(avg_cer - avg_cer_chars_only)/avg_cer*100:.1f}%")
+        print(f"      CER improvement: {(avg_cer - total_cer_chars_only)/avg_cer*100:.1f}%")
     if avg_wer > 0:
-        print(f"      Улучшение WER: {(avg_wer - avg_wer_chars_only)/avg_wer*100:.1f}%")
+        print(f"      WER improvement: {(avg_wer - total_wer_chars_only)/avg_wer*100:.1f}%")
     
     # 2. Типы ошибок
-    print(f"\n2️⃣ ТИПЫ ОШИБОК:")
+    print(f"\n2️⃣ ERROR TYPES:")
     error_types = analyze_error_types(error_details)
-    print(f"   Разная длина: {error_types['length_mismatch']} ({error_types['length_mismatch']/error_types['total']*100:.1f}%)")
-    print(f"   Только регистр: {error_types['case_errors']} ({error_types['case_errors']/error_types['total']*100:.1f}%)")
-    print(f"   Похожие (1-2 символа): {error_types['similar_chars']} ({error_types['similar_chars']/error_types['total']*100:.1f}%)")
-    print(f"   Полностью неверные: {error_types['completely_wrong']} ({error_types['completely_wrong']/error_types['total']*100:.1f}%)")
+    print(f"   Different length: {error_types['length_mismatch']} ({error_types['length_mismatch']/error_types['total']*100:.1f}%)")
+    print(f"   Case only: {error_types['case_errors']} ({error_types['case_errors']/error_types['total']*100:.1f}%)")
+    print(f"   Similar (1-2 chars): {error_types['similar_chars']} ({error_types['similar_chars']/error_types['total']*100:.1f}%)")
+    print(f"   Completely wrong: {error_types['completely_wrong']} ({error_types['completely_wrong']/error_types['total']*100:.1f}%)")
     
-    # 3. Анализ длины слов с ошибками
-    print(f"\n3️⃣ ДЛИНА СЛОВ С ОШИБКАМИ:")
+    # 3. Длина слов с ошибками
+    print(f"\n3️⃣ ERROR WORD LENGTHS:")
     error_lengths = analyze_word_lengths(error_details)
     if error_lengths:
         avg_error_len = sum(error_lengths) / len(error_lengths)
-        print(f"   Средняя длина: {avg_error_len:.1f} символов")
-        print(f"   Мин: {min(error_lengths)}, Макс: {max(error_lengths)}")
+        print(f"   Average length: {avg_error_len:.1f} characters")
+        print(f"   Min: {min(error_lengths)}, Max: {max(error_lengths)}")
         
-        # Распределение по длинам
         length_dist = Counter(error_lengths)
-        print(f"   Распределение:")
-        for length in sorted(length_dist.keys())[:10]:  # Топ-10
-            print(f"      {length} символов: {length_dist[length]} слов")
+        print(f"   Distribution (top-10):")
+        for length in sorted(length_dist.keys())[:10]:
+            print(f"      {length} characters: {length_dist[length]} words")
     
     # 4. Анализ ошибок по символам
-    print(f"\n4️⃣ АНАЛИЗ ОШИБОК ПО СИМВОЛАМ:")
+    print(f"\n4️⃣ CHARACTER-LEVEL ERROR ANALYSIS:")
     substitutions, insertions, deletions, error_positions = analyze_character_errors(refs, hyps)
     
-    # Позиции ошибок
     total_pos = sum(error_positions.values())
     if total_pos > 0:
-        print(f"   Позиция ошибок в слове:")
-        print(f"      Начало (0-20%): {error_positions['start']} ({error_positions['start']/total_pos*100:.1f}%)")
-        print(f"      Середина (20-80%): {error_positions['middle']} ({error_positions['middle']/total_pos*100:.1f}%)")
-        print(f"      Конец (80-100%): {error_positions['end']} ({error_positions['end']/total_pos*100:.1f}%)")
+        print(f"   Error position in word:")
+        print(f"      Start (0-20%): {error_positions['start']} ({error_positions['start']/total_pos*100:.1f}%)")
+        print(f"      Middle (20-80%): {error_positions['middle']} ({error_positions['middle']/total_pos*100:.1f}%)")
+        print(f"      End (80-100%): {error_positions['end']} ({error_positions['end']/total_pos*100:.1f}%)")
     
-    # Самые частые замены
-    print(f"\n   🔄 Топ-20 замен символов (правильный → ошибочный):")
+    print(f"\n   🔄 Top-20 character substitutions (correct → wrong):")
     
-    # Разделим замены на регистровые и не регистровые
     case_substitutions = []
     non_case_substitutions = []
     
@@ -569,178 +753,50 @@ if error_details:
     non_case_substitutions.sort(key=lambda x: x[1], reverse=True)
     
     if case_substitutions:
-        print(f"\n      Регистровые замены (топ-10):")
+        print(f"\n      Case substitutions (top-10):")
         for (correct, wrong), count in case_substitutions[:10]:
-            print(f"         '{correct}' → '{wrong}': {count} раз")
+            print(f"         '{correct}' → '{wrong}': {count} times")
     
     if non_case_substitutions:
-        print(f"\n      Другие замены (топ-20):")
+        print(f"\n      Other substitutions (top-20):")
         for (correct, wrong), count in non_case_substitutions[:20]:
-            print(f"         '{correct}' → '{wrong}': {count} раз")
+            print(f"         '{correct}' → '{wrong}': {count} times")
     
-    # Самые частые вставки
     if insertions:
-        print(f"\n   ➕ Топ-10 лишних символов:")
+        print(f"\n   ➕ Top-10 inserted characters:")
         for char, count in insertions.most_common(10):
-            print(f"      '{char}': {count} раз")
+            print(f"      '{char}': {count} times")
     
-    # Самые частые удаления
     if deletions:
-        print(f"\n   ➖ Топ-10 пропущенных символов:")
+        print(f"\n   ➖ Top-10 deleted characters:")
         for char, count in deletions.most_common(10):
-            print(f"      '{char}': {count} раз")
+            print(f"      '{char}': {count} times")
     
     # 5. Худшие примеры
-    print(f"\n5️⃣ ХУДШИЕ ПРИМЕРЫ (топ-10 по CER):")
+    print(f"\n5️⃣ WORST EXAMPLES (top-10 by CER):")
     worst_examples = sorted(error_details, key=lambda x: x['cer'], reverse=True)[:10]
     for i, ex in enumerate(worst_examples, 1):
         print(f"   {i}. [{ex['fname']}]")
         print(f"      GT:   '{ex['ref']}'")
         print(f"      Pred: '{ex['hyp']}'")
         print(f"      CER: {ex['cer']:.3f}, Conf: {ex['confidence']:.3f}")
-
-    # === 5. ВСЕ ОШИБКИ (разбитые на 4 HTML, отсортированы по GT) ===
-    print(f"\n5️⃣ СОЗДАЁМ HTML-ОТЧЁТЫ СО ВСЕМИ ОШИБКАМИ (разбитые на 4 части, сортировка по GT)...")
-
-    import base64
-    from io import BytesIO
-    from PIL import Image
-    import math
-
-    # === 1. Берём все ошибки, сортируем по GT ===
-    all_errors = sorted(error_details, key=lambda x: x['ref'].lower())
-    num_errors = len(all_errors)
-    num_parts = 4
-    part_size = math.ceil(num_errors / num_parts)
-
-    print(f"   Всего ошибок: {num_errors}")
-    print(f"   Будет создано {num_parts} HTML-файла по ~{part_size} записей каждый")
-
-    # === 2. Общий стиль и JS (единые для всех частей) ===
-    def make_html_header(title):
-        return [
-            "<html><head><meta charset='utf-8'>",
-            "<style>",
-            "body { font-family: Arial, sans-serif; background: #fafafa; }",
-            "table { border-collapse: collapse; width: 100%; margin: 20px 0; table-layout: fixed; }",
-            "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: middle; overflow-wrap: break-word; }",
-            "th { background-color: #f2f2f2; }",
-            "td:nth-child(2) { width: 150px; text-align: center; }",
-            "img { max-width: 140px; max-height: 80px; object-fit: contain; border-radius: 6px; background: #fff; }",
-            ".gt { color: #006400; font-weight: bold; }",
-            ".pred { color: #8B0000; font-weight: bold; }",
-            ".edit { background: #ffffe0; }",
-            ".num { text-align: center; }",
-            "button { margin: 10px; padding: 6px 10px; }",
-            "</style></head><body>",
-            f"<h2>{title}</h2>",
-            "<div>",
-            "<button onclick='resizeImages(0.5)'>🔍 Уменьшить</button>",
-            "<button onclick='resizeImages(1)'>🔎 Нормально</button>",
-            "<button onclick='resizeImages(2)'>🔍 Увеличить</button>",
-            "<button onclick='downloadCorrections()'>💾 Скачать правки (CSV)</button>",
-            "</div>",
-            "<script>",
-            "function resizeImages(scale){document.querySelectorAll('img').forEach(img=>{img.style.maxWidth=(140*scale)+'px';img.style.maxHeight=(80*scale)+'px';});}",
-            "function saveCorrection(id){const val=document.getElementById('edit_'+id).innerText.trim();localStorage.setItem('ocr_edit_'+id,val);}",
-            "function loadCorrections(){document.querySelectorAll('[id^=edit_]').forEach(el=>{const saved=localStorage.getItem('ocr_edit_'+el.id.split('edit_')[1]);if(saved){el.innerText=saved;}});}",
-            "function downloadCorrections(){let rows=[['#','filename','GT','Pred','CER','Conf','Correction']];document.querySelectorAll('tr[data-id]').forEach(tr=>{const id=tr.getAttribute('data-id');const cells=tr.querySelectorAll('td');const correction=document.getElementById('edit_'+id).innerText.trim().replace(/\\n/g,' ');rows.push([id,cells[2].innerText,cells[3].innerText,cells[4].innerText,cells[5].innerText,cells[6].innerText,correction]);});const csvContent=rows.map(r=>r.map(v=>'\"'+v.replaceAll('\"','\"\"')+'\"').join(',')).join('\\n');const blob=new Blob([csvContent],{type:'text/csv;charset=utf-8;'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ocr_corrections.csv';a.click();}",
-            "window.onload=loadCorrections;",
-            "</script>",
-            "<table>",
-            "<tr><th>#</th><th>Изображение</th><th>Файл</th><th>GT</th><th>Pred</th><th>CER</th><th>Conf.</th><th>Правка ✏️</th></tr>"
-        ]
-
-    def make_html_row(i, ex):
-        fname = ex['fname']
-        cer = f"{ex['cer']:.3f}"
-        conf = f"{ex['confidence']:.3f}"
-        gt = ex['ref'].replace("<", "&lt;").replace(">", "&gt;")
-        pred = ex['hyp'].replace("<", "&lt;").replace(">", "&gt;")
-
-        # Находим путь к изображению
-        img_path = None
-        for d in datasets:
-            candidate = os.path.join(d["image_dir"], fname)
-            if os.path.exists(candidate):
-                img_path = candidate
-                break
-
-        # Конвертируем в base64
-        if img_path:
-            try:
-                with Image.open(img_path) as img:
-                    img.thumbnail((400, 200))
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=80)
-                    img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                    img_tag = f"<img src='data:image/jpeg;base64,{img_base64}'>"
-            except Exception:
-                img_tag = f"<div style='color:red;'>Ошибка загрузки</div>"
-        else:
-            img_tag = "<div style='color:gray;'>Нет изображения</div>"
-
-        return (
-            f"<tr data-id='{i}'>"
-            f"<td class='num'>{i}</td>"
-            f"<td>{img_tag}</td>"
-            f"<td>{fname}</td>"
-            f"<td class='gt'>{gt}</td>"
-            f"<td class='pred'>{pred}</td>"
-            f"<td class='num'>{cer}</td>"
-            f"<td class='num'>{conf}</td>"
-            f"<td class='edit' id='edit_{i}' contenteditable='true' oninput='saveCorrection({i})'></td>"
-            f"</tr>"
-        )
-
-    # === 3. Генерация 4 HTML-файлов ===
-    for part_idx in range(num_parts):
-        start = part_idx * part_size
-        end = min(start + part_size, num_errors)
-        subset = all_errors[start:end]
-
-        if not subset:
-            continue
-
-        html_lines = make_html_header(f"📊 OCR ошибки (часть {part_idx+1} из {num_parts}) — записи {start+1}–{end}")
-        for i, ex in enumerate(subset, start + 1):
-            html_lines.append(make_html_row(i, ex))
-        html_lines.append("</table></body></html>")
-
-        html_path = os.path.join(
-            os.path.dirname(model_path),
-            f"ocr_all_errors_part{part_idx+1}.html"
-        )
-
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(html_lines))
-
-        print(f"💾 HTML-отчёт сохранён: {html_path}")
-
-    print(f"\n✅ Создано {num_parts} HTML-файлов со всеми {num_errors} ошибками (отсортировано по GT).")
-
-
+    
     # 6. Связь уверенности и ошибок
-    print(f"\n6️⃣ СВЯЗЬ УВЕРЕННОСТИ И ОШИБОК:")
+    print(f"\n6️⃣ CONFIDENCE VS ERRORS:")
     low_conf_errors = [e for e in error_details if e['confidence'] < 0.8]
     high_conf_errors = [e for e in error_details if e['confidence'] >= 0.8]
-    print(f"   Ошибки с низкой уверенностью (<0.8): {len(low_conf_errors)} ({len(low_conf_errors)/len(error_details)*100:.1f}%)")
-    print(f"   Ошибки с высокой уверенностью (≥0.8): {len(high_conf_errors)} ({len(high_conf_errors)/len(error_details)*100:.1f}%)")
+    print(f"   Errors with low confidence (<0.8): {len(low_conf_errors)} ({len(low_conf_errors)/len(error_details)*100:.1f}%)")
+    print(f"   Errors with high confidence (≥0.8): {len(high_conf_errors)} ({len(high_conf_errors)/len(error_details)*100:.1f}%)")
     
     if error_details:
         avg_conf_errors = sum(e['confidence'] for e in error_details) / len(error_details)
-        print(f"   Средняя уверенность на ошибках: {avg_conf_errors:.3f}")
-   
-    # 7. Все ошибки, отсортированные по уверенности
-    print(f"\n7️⃣ ВСЕ ОШИБКИ (отсортированные по уверенности модели):")
+        print(f"   Average confidence on errors: {avg_conf_errors:.3f}")
+    
+    # 7. Сохранение ошибок в CSV
+    print(f"\n7️⃣ SAVING ERROR DETAILS TO CSV...")
     sorted_errors = sorted(error_details, key=lambda x: x['confidence'], reverse=True)
     
-    print(f"{'Файл':30s} | {'Conf.':>7s} | {'CER':>5s} | {'GT':25s} | {'Pred':25s}")
-    print("-" * 100)
-    # === Сохранение ошибок в CSV ===
-    import csv
-
-    output_csv = os.path.join(os.path.dirname(model_path), "ocr_errors_by_confidence.csv")
+    output_csv = OUTPUT_DIR / "ocr_errors_by_confidence.csv"
     with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["filename", "confidence", "CER", "WER", "GT", "Prediction"])
@@ -753,9 +809,13 @@ if error_details:
                 err['ref'],
                 err['hyp'],
             ])
-
-    print(f"\n💾 Ошибки сохранены в файл: {output_csv}")
+    
+    print(f"   💾 Errors saved to: {output_csv}")
+    
+    print()
+    print("=" * 80)
 else:
-    print("\n✅ Нет ошибок! Все слова распознаны идеально!")
+    print("✅ NO ERRORS! All words recognized perfectly!")
+    print("=" * 80)
 
-print("\n" + "="*80)
+print("\n✨ DONE!")
