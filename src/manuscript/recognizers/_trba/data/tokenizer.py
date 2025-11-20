@@ -1,7 +1,8 @@
 import json
 import os
 from collections import Counter, defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, OrderedDict
+from collections import OrderedDict as ODict
 
 
 class BPETokenizer:
@@ -9,7 +10,8 @@ class BPETokenizer:
         self.base_charset = base_charset
         self.vocab = list(base_charset)
         self.stoi = {s: i for i, s in enumerate(self.vocab)}
-        self.merges: Dict[Tuple[str, str], str] = {}
+        # Use OrderedDict to preserve merge order explicitly
+        self.merges: ODict[Tuple[str, str], str] = ODict()
         self.special_tokens = {"<PAD>", "<SOS>", "<EOS>", "<BLANK>"}
 
     def train(self, texts: List[str], vocab_size: int, max_steps: int = 10000):
@@ -79,42 +81,33 @@ class BPETokenizer:
     def encode(self, text: str) -> List[int]:
         """
         Encode text using learned BPE merges.
+        Applies merges greedily in the order they were learned.
         """
-        # Start with characters
-        word = [c for c in text if c in self.stoi]  # Only known base chars
+        # Start with characters - only keep those in base charset
+        word = []
+        for c in text:
+            if c in self.base_charset and c not in self.special_tokens:
+                word.append(c)
+
         if not word:
             return []
 
-        # Apply merges iteratively
-        # This is a simplified application, ideally we apply in order of priority (merges dict order)
-        # But since we learned them greedily, we can just apply them.
-        # However, for correct BPE encoding, we should apply the merges in the order they were learned.
-        # Or, simpler: just iterate through merges and apply if present.
-        # Since self.merges is a dict, we need to respect insertion order (Python 3.7+ does this).
-
-        # Optimization: we can loop until no changes, but applying in order is safer for consistency.
-        # Actually, standard BPE applies the *best available merge* at each step.
-        # But since we have the full list of merges, we can just iterate through our learned merges.
-
-        # Wait, if we have merges A+B->X and X+C->Y.
-        # If we iterate, we must apply A+B->X first.
-        # Since we store merges in order of creation, iterating through them is correct.
-
+        # Apply merges in order (greedy approach)
+        # Each merge is applied once to the entire sequence
         current_word = list(word)
 
-        # Optimization: only check merges that are possible?
-        # For a small number of merges (512), iterating is fast enough.
-
-        # But wait, applying merges one by one over the whole word is O(N_merges * len_word).
-        # If N_merges is 512, it's fine.
-
         for pair, new_token in self.merges.items():
+            if len(current_word) < 2:
+                break
+
             new_word = []
             j = 0
             while j < len(current_word):
+                # Check if we can apply this merge
                 if (
                     j < len(current_word) - 1
-                    and (current_word[j], current_word[j + 1]) == pair
+                    and current_word[j] == pair[0]
+                    and current_word[j + 1] == pair[1]
                 ):
                     new_word.append(new_token)
                     j += 2
@@ -122,10 +115,26 @@ class BPETokenizer:
                     new_word.append(current_word[j])
                     j += 1
             current_word = new_word
-            if len(current_word) == 1:
-                break
 
         return [self.stoi[token] for token in current_word]
+
+    def decode(self, token_ids: List[int]) -> str:
+        """
+        Decode token IDs back to text.
+        Simply concatenates the string representations of tokens.
+        """
+        if not token_ids:
+            return ""
+
+        tokens = []
+        for token_id in token_ids:
+            if 0 <= token_id < len(self.vocab):
+                token = self.vocab[token_id]
+                # Skip special tokens
+                if token not in self.special_tokens:
+                    tokens.append(token)
+
+        return "".join(tokens)
 
     def save(self, path: str):
         data = {
@@ -147,8 +156,9 @@ class BPETokenizer:
         tokenizer.vocab = data["vocab"]
         tokenizer.stoi = {s: i for i, s in enumerate(tokenizer.vocab)}
 
-        # Reconstruct merges
+        # Reconstruct merges in ORDER (critical for BPE)
         # stored as [a, b, result]
+        tokenizer.merges = ODict()
         for item in data["merges"]:
             pair = (item[0], item[1])
             result = item[2]

@@ -10,7 +10,7 @@ if __name__ == "__main__":
         val_roots=[
             r"C:\shared\orig_cyrillic\test",
         ],
-        exp_dir="experiments/trba_exp_printed_lite",
+        exp_dir="experiments/trba_exp_printed_lite_bpe_3",
         max_len=40,
         img_h=32,
         img_w=256,
@@ -18,14 +18,14 @@ if __name__ == "__main__":
         num_encoder_layers=2,
         batch_size=64,
         cnn_backbone="seresnet31lite",
-        epochs=55,
+        epochs=110,
         lr=0.001,
         optimizer="AdamW",
         scheduler="OneCycleLR",
         device="cuda",
         pretrain_weights=True,
         val_interval=1,
-        bpe_vocab_size=512,
+        bpe_vocab_size=1024,
     )
 
     print(train_summary)
