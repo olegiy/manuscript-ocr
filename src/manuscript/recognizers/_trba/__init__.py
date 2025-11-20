@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - optional dependency for default weight
     gdown = None  # type: ignore[assignment]
 
 from .data.transforms import load_charset
+from .data.tokenizer import BPETokenizer
 from .training.train import Config, run_training
 
 
@@ -140,10 +141,28 @@ class TRBA:
         self.cnn_out_channels = config.get("cnn_out_channels", 512)
         self.cnn_backbone = config.get("cnn_backbone", "seresnet31")
 
+        # BPE handling
+        self.bpe_vocab_size = config.get("bpe_vocab_size", 0)
+        self.tokenizer = None
+
         # Определяем device для ONNX Runtime
         self.device = device or ("cuda" if ort.get_device() == "GPU" else "cpu")
 
         self.itos, self.stoi = load_charset(charset_path)
+
+        if self.bpe_vocab_size > 0:
+            # Try to find tokenizer.json next to weights or config
+            tokenizer_path = None
+            if self.config_path:
+                tokenizer_path = Path(self.config_path).parent / "tokenizer.json"
+            elif self.model_path:
+                tokenizer_path = Path(self.model_path).parent / "tokenizer.json"
+
+            if tokenizer_path and tokenizer_path.exists():
+                self.tokenizer = BPETokenizer.load(str(tokenizer_path))
+                self.itos = self.tokenizer.vocab
+                self.stoi = self.tokenizer.stoi
+
         self.pad_id = self.stoi["<PAD>"]
         self.sos_id = self.stoi["<SOS>"]
         self.eos_id = self.stoi["<EOS>"]
@@ -152,12 +171,10 @@ class TRBA:
         # Проверяем что файл существует и это ONNX модель
         if not Path(self.model_path).exists():
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
-        
+
         model_ext = Path(self.model_path).suffix.lower()
         if model_ext != ".onnx":
-            raise ValueError(
-                f"Expected .onnx file, got: {self.model_path}"
-            )
+            raise ValueError(f"Expected .onnx file, got: {self.model_path}")
 
         # Загружаем ONNX модель
         providers = []
@@ -165,7 +182,9 @@ class TRBA:
             providers.append("CUDAExecutionProvider")
         providers.append("CPUExecutionProvider")
 
-        self.onnx_session = ort.InferenceSession(str(self.model_path), providers=providers)
+        self.onnx_session = ort.InferenceSession(
+            str(self.model_path), providers=providers
+        )
 
     def _resolve_model_and_config_paths(
         self,
@@ -249,7 +268,7 @@ class TRBA:
     ) -> np.ndarray:
         """
         Preprocess image for ONNX inference. Returns [1, 3, H, W] numpy array.
-        
+
         Applies same preprocessing as training:
         1. Resize with aspect ratio preservation and padding
         2. Normalize with mean=0.5, std=0.5 (same as albumentations)
@@ -277,33 +296,33 @@ class TRBA:
         scale = min(self.img_h / max(h, 1), self.img_w / max(w, 1))
         new_w = max(1, int(round(w * scale)))
         new_h = max(1, int(round(h * scale)))
-        
+
         # Choose interpolation
         if new_h < h or new_w < w:
             interp = cv2.INTER_AREA
         else:
             interp = cv2.INTER_LINEAR
-        
+
         img_resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
-        
+
         # Create white canvas and paste resized image (center alignment)
         canvas = np.full((self.img_h, self.img_w, 3), 255, dtype=np.uint8)
-        
+
         # Center vertically
         y_offset = (self.img_h - new_h) // 2
         # Left align horizontally
         x_offset = 0
-        
-        canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = img_resized
-        
+
+        canvas[y_offset : y_offset + new_h, x_offset : x_offset + new_w] = img_resized
+
         # Normalize: mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)
         # This is equivalent to: (x / 255.0 - 0.5) / 0.5 = (x - 127.5) / 127.5
         img_normalized = (canvas.astype(np.float32) - 127.5) / 127.5
-        
+
         # Convert to CHW format
         img_chw = np.transpose(img_normalized, (2, 0, 1))  # HWC -> CHW
         img_batch = np.expand_dims(img_chw, axis=0)  # Add batch dimension
-        
+
         return img_batch
 
     def predict(
@@ -373,39 +392,51 @@ class TRBA:
             for img in batch_images:
                 tensor = self._preprocess_image(img)  # [1, 3, H, W]
                 batch_tensors.append(tensor[0])  # Remove batch dim
-            
+
             batch_input = np.stack(batch_tensors, axis=0)  # [B, 3, H, W]
 
             # ONNX inference
             input_name = self.onnx_session.get_inputs()[0].name
             output_name = self.onnx_session.get_outputs()[0].name
-            
+
             ort_outputs = self.onnx_session.run(
-                [output_name],
-                {input_name: batch_input}
+                [output_name], {input_name: batch_input}
             )
             logits = ort_outputs[0]  # [B, max_length, num_classes]
 
             # Decode predictions
             preds = np.argmax(logits, axis=-1)  # [B, max_length]
-            
+
             # Calculate confidence (softmax + mean log prob)
             probs = self._softmax(logits, axis=-1)  # [B, T, num_classes]
 
             for j in range(len(batch_images)):
                 pred_row = preds[j]  # [max_length]
-                
+
                 # Decode to text
-                decoded_chars = []
-                for token_id in pred_row:
-                    if token_id == self.eos_id:
-                        break
-                    if token_id not in [self.pad_id, self.sos_id]:
-                        if token_id < len(self.itos):
-                            decoded_chars.append(self.itos[token_id])
-                
-                text = "".join(decoded_chars)
-                
+                if self.tokenizer:
+                    # Find EOS
+                    eos_idx = np.where(pred_row == self.eos_id)[0]
+                    if len(eos_idx) > 0:
+                        pred_row = pred_row[: eos_idx[0]]
+
+                    # Filter out SOS, PAD
+                    valid_ids = [
+                        idx for idx in pred_row if idx not in (self.sos_id, self.pad_id)
+                    ]
+
+                    text = self.tokenizer.decode(valid_ids)
+                else:
+                    decoded_chars = []
+                    for token_id in pred_row:
+                        if token_id == self.eos_id:
+                            break
+                        if token_id not in [self.pad_id, self.sos_id]:
+                            if token_id < len(self.itos):
+                                decoded_chars.append(self.itos[token_id])
+
+                    text = "".join(decoded_chars)
+
                 # Calculate confidence
                 seq_probs = []
                 for t, token_id in enumerate(pred_row):
@@ -413,9 +444,9 @@ class TRBA:
                         break
                     if token_id not in [self.pad_id, self.sos_id]:
                         seq_probs.append(probs[j, t, token_id])
-                
+
                 confidence = float(np.mean(seq_probs)) if seq_probs else 0.0
-                
+
                 results.append({"text": text, "confidence": confidence})
 
         return results
@@ -467,6 +498,7 @@ class TRBA:
         freeze_enc_rnn: str = "none",
         freeze_attention: str = "none",
         pretrain_weights: Optional[object] = "default",
+        bpe_vocab_size: int = 0,
         **extra_config: Any,
     ):
         """
@@ -577,6 +609,10 @@ class TRBA:
             - str/Path — path or URL to custom weights file
 
             Default is ``"default"``.
+        bpe_vocab_size : int, optional
+            Size of BPE vocabulary to learn and add to charset.
+            If > 0, trains a BPE tokenizer on training text and uses it.
+            Default is 0 (disabled).
         **extra_config : dict, optional
             Additional configuration parameters passed to training config.
 
@@ -746,6 +782,7 @@ class TRBA:
             "val_size": val_size,
             "num_workers": num_workers,
             "seed": seed,
+            "bpe_vocab_size": bpe_vocab_size,
         }
 
         if exp_dir is not None:
@@ -895,32 +932,34 @@ class TRBA:
 
         # Load config
         print(f"Loading config from {config_path}...")
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
         # Extract model parameters
-        max_length = config.get('max_len', 40)
-        img_h = config.get('img_h', 64)
-        img_w = config.get('img_w', 256)
-        hidden_size = config.get('hidden_size', 256)
-        num_encoder_layers = config.get('num_encoder_layers', 2)
-        cnn_in_channels = config.get('cnn_in_channels', 3)
-        cnn_out_channels = config.get('cnn_out_channels', 512)
-        cnn_backbone = config.get('cnn_backbone', 'seresnet31')
-        
+        max_length = config.get("max_len", 40)
+        img_h = config.get("img_h", 64)
+        img_w = config.get("img_w", 256)
+        hidden_size = config.get("hidden_size", 256)
+        num_encoder_layers = config.get("num_encoder_layers", 2)
+        cnn_in_channels = config.get("cnn_in_channels", 3)
+        cnn_out_channels = config.get("cnn_out_channels", 512)
+        cnn_backbone = config.get("cnn_backbone", "seresnet31")
+
         # Load charset to determine num_classes
         print(f"Loading charset from {charset_path}...")
         itos, stoi = load_charset(str(charset_path))
-        num_classes = len(itos)  # itos already includes special tokens (PAD, SOS, EOS, BLANK, ...)
+        num_classes = len(
+            itos
+        )  # itos already includes special tokens (PAD, SOS, EOS, BLANK, ...)
         print(f"Charset loaded: {len(itos)} total classes (including special tokens)")
         print(f"  First 4 tokens (special): {itos[:4]}")
         print(f"  Regular characters: {len(itos) - 4}")
-        
+
         # Load weights
         print(f"\nLoading checkpoint from {weights_path}...")
-        checkpoint = torch.load(str(weights_path), map_location='cpu')
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
+        checkpoint = torch.load(str(weights_path), map_location="cpu")
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
         else:
             state_dict = checkpoint
 
@@ -1012,7 +1051,9 @@ class TRBA:
                 else:
                     print("[WARNING] Simplification failed, using original model")
             except ImportError:
-                print("[WARNING] onnx-simplifier not installed, skipping simplification")
+                print(
+                    "[WARNING] onnx-simplifier not installed, skipping simplification"
+                )
                 print("  Install with: pip install onnx-simplifier")
 
         # Test ONNX inference
@@ -1047,4 +1088,3 @@ class TRBA:
         print(f"\nInput shape: [batch_size, 3, {img_h}, {img_w}]")
         print(f"Output shape: [batch_size, {max_length}, {num_classes}]")
         print(f"Decoding: Greedy (argmax over last dimension)")
-

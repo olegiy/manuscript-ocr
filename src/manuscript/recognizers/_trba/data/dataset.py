@@ -16,7 +16,7 @@ from .transforms import (
     pack_attention_targets,
     get_train_transform,
     get_val_transform,
-    decode_tokens
+    decode_tokens,
 )
 
 
@@ -46,7 +46,11 @@ class OCRDatasetAttn(Dataset):
         self.samples: List[Tuple[str, str]] = []
         self._file_index = build_file_index(images_dir)
         self._encoding = encoding
-        self._delimiter = delimiter if delimiter is not None else ("\t" if csv_path.lower().endswith(".tsv") else ",")
+        self._delimiter = (
+            delimiter
+            if delimiter is not None
+            else ("\t" if csv_path.lower().endswith(".tsv") else ",")
+        )
         self._has_header = has_header
         self._strict_charset = strict_charset
         self._validate_image = validate_image
@@ -54,9 +58,14 @@ class OCRDatasetAttn(Dataset):
         self._strict_max_len = strict_max_len
 
         self._reasons = {
-            "bad_row": 0, "empty_fname": 0, "empty_label": 0,
-            "charset": 0, "too_long": 0,
-            "missing_path": 0, "ambiguous": 0, "readfail": 0,
+            "bad_row": 0,
+            "empty_fname": 0,
+            "empty_label": 0,
+            "charset": 0,
+            "too_long": 0,
+            "missing_path": 0,
+            "ambiguous": 0,
+            "readfail": 0,
         }
         self._examples = {k: [] for k in self._reasons}
         self._EX_MAX = 8
@@ -74,7 +83,9 @@ class OCRDatasetAttn(Dataset):
 
         self._print_summary(csv_path)
         if self._validate_image:
-            print("[OCRDatasetAttn] Lazy image validation is enabled; unreadable images will be skipped during the first access.")
+            print(
+                "[OCRDatasetAttn] Lazy image validation is enabled; unreadable images will be skipped during the first access."
+            )
 
         if not self.samples:
             raise RuntimeError(f"В датасете {csv_path} не осталось валидных примеров!")
@@ -126,7 +137,9 @@ class OCRDatasetAttn(Dataset):
                 tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
             return tensor, label
 
-        raise RuntimeError("Failed to fetch a valid sample after lazy validation retries.")
+        raise RuntimeError(
+            "Failed to fetch a valid sample after lazy validation retries."
+        )
 
     def _mark_sample_invalid(self, idx: int, abs_path: str, error: Exception):
         self._invalid_mask[idx] = True
@@ -135,24 +148,35 @@ class OCRDatasetAttn(Dataset):
             self._examples["readfail"].append(f"{abs_path} :: {type(error).__name__}")
         self._lazy_skipped += 1
         if not self._lazy_warned:
-            print("[OCRDatasetAttn] Lazy validation detected unreadable images; they will be skipped during iteration.")
+            print(
+                "[OCRDatasetAttn] Lazy validation detected unreadable images; they will be skipped during iteration."
+            )
             self._lazy_warned = True
 
     def _choose_alternative_index(self, bad_idx: int) -> int:
-        candidates = [i for i, invalid in enumerate(self._invalid_mask) if not invalid and i != bad_idx]
+        candidates = [
+            i
+            for i, invalid in enumerate(self._invalid_mask)
+            if not invalid and i != bad_idx
+        ]
         if candidates:
             return random.choice(candidates)
         raise RuntimeError("No valid samples remain after filtering unreadable images.")
 
     @staticmethod
-    def make_collate_attn(stoi, max_len: int, drop_blank: bool = True):
+    def make_collate_attn(stoi, max_len: int, drop_blank: bool = True, tokenizer=None):
         def collate(batch):
             imgs, labels_text = zip(*batch)
             imgs = torch.stack(imgs)
             text_in, target_y, lengths = pack_attention_targets(
-                labels_text, stoi=stoi, max_len=max_len, drop_blank=drop_blank
+                labels_text,
+                stoi=stoi,
+                max_len=max_len,
+                drop_blank=drop_blank,
+                tokenizer=tokenizer,
             )
             return imgs, text_in, target_y, lengths
+
         return collate
 
     def _read_rows(self, csv_path: str):
@@ -176,7 +200,7 @@ class OCRDatasetAttn(Dataset):
     @staticmethod
     def _norm_label(s: str) -> str:
 
-        return s.replace("\u00A0", " ").strip().replace("\ufeff", "")
+        return s.replace("\u00a0", " ").strip().replace("\ufeff", "")
 
     @staticmethod
     def _norm_fname(s: str) -> str:
@@ -247,7 +271,9 @@ class OCRDatasetAttn(Dataset):
             if self._effective_len(label) > self._max_len:
                 self._reasons["too_long"] += 1
                 if len(self._examples["too_long"]) < self._EX_MAX:
-                    self._examples["too_long"].append((fname, len(label), f"eff>{self._max_len}"))
+                    self._examples["too_long"].append(
+                        (fname, len(label), f"eff>{self._max_len}")
+                    )
                 return None
 
         abs_path = self._resolve_path(fname)
@@ -270,8 +296,12 @@ class OCRDatasetAttn(Dataset):
         results, skipped = [], 0
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = [ex.submit(self._validate_row, row) for row in self._rows]
-            for fut in tqdm(as_completed(futures), total=len(futures),
-                            desc="Проверка датасета", leave=False):
+            for fut in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Проверка датасета",
+                leave=False,
+            ):
                 res = fut.result()
                 if res is not None:
                     results.append(res)
@@ -283,7 +313,16 @@ class OCRDatasetAttn(Dataset):
     def _print_summary(self, csv_path: str):
         if self._skipped > 0:
             print(f"[OCRDatasetAttn] {csv_path}: пропущено {self._skipped} записей.")
-            order = ["bad_row","empty_fname","empty_label","charset","too_long","missing_path","ambiguous","readfail"]
+            order = [
+                "bad_row",
+                "empty_fname",
+                "empty_label",
+                "charset",
+                "too_long",
+                "missing_path",
+                "ambiguous",
+                "readfail",
+            ]
             for k in order:
                 cnt = self._reasons[k]
                 if cnt > 0:
@@ -294,7 +333,10 @@ class OCRDatasetAttn(Dataset):
             if self._reasons["charset"] > 0 and self._missing_chars:
                 print("  Отсутствующие символы (TOP 30):")
                 for ch, cnt in self._missing_chars.most_common(30):
-                    print(f"    '{ch}' (U+{ord(ch):04X}, repr={repr(ch)}): {cnt} раз(а)")
+                    print(
+                        f"    '{ch}' (U+{ord(ch):04X}, repr={repr(ch)}): {cnt} раз(а)"
+                    )
+
 
 class ProportionalBatchSampler:
     def __init__(self, datasets, batch_size, proportions):
@@ -344,6 +386,3 @@ class MultiDataset(Dataset):
 
     def __len__(self):
         return sum(len(ds) for ds in self.datasets)
-
-
-

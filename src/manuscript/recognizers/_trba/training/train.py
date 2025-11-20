@@ -27,6 +27,7 @@ from ..data.transforms import (
     get_val_transform,
     load_charset,
 )
+from ..data.tokenizer import BPETokenizer
 from .metrics import character_error_rate, compute_accuracy, word_error_rate
 from ..model.model import TRBAModel
 from .utils import (
@@ -602,16 +603,70 @@ def run_training(cfg: Config, device: str = "cuda"):
 
     # --- charset ---
     itos, stoi = load_charset(charset_path)
+
+    # BPE Tokenization
+    bpe_vocab_size = getattr(cfg, "bpe_vocab_size", 0)
+    tokenizer = None
+
+    if bpe_vocab_size > 0:
+        tokenizer_path = os.path.join(exp_dir, "tokenizer.json")
+        if os.path.exists(tokenizer_path):
+            logger.info(f"Loading existing BPE tokenizer from {tokenizer_path}")
+            tokenizer = BPETokenizer.load(tokenizer_path)
+            # Update itos/stoi from tokenizer
+            itos = tokenizer.vocab
+            stoi = tokenizer.stoi
+        else:
+            logger.info(f"Training BPE tokenizer (vocab_size={bpe_vocab_size})...")
+            # Collect texts
+            texts = []
+            for csv_path in train_csvs:
+                try:
+                    with open(csv_path, "r", encoding=encoding) as f:
+                        delimiter = "\t" if csv_path.lower().endswith(".tsv") else ","
+                        reader = csv.reader(f, delimiter=delimiter)
+                        # Skip header if present (simple check)
+                        rows = list(reader)
+                        if rows and rows[0][0].lower() in {
+                            "file",
+                            "filename",
+                            "image",
+                            "path",
+                        }:
+                            rows = rows[1:]
+                        for row in rows:
+                            if len(row) >= 2:
+                                texts.append(row[1])
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to read texts from {csv_path} for BPE training: {e}"
+                    )
+
+            if not texts:
+                logger.warning(
+                    "No texts found for BPE training! Falling back to standard charset."
+                )
+            else:
+                tokenizer = BPETokenizer(base_charset=itos)
+                tokenizer.train(texts, bpe_vocab_size)
+                tokenizer.save(tokenizer_path)
+                logger.info(f"BPE tokenizer saved to {tokenizer_path}")
+
+                itos = tokenizer.vocab
+                stoi = tokenizer.stoi
+
     PAD = stoi["<PAD>"]
     SOS = stoi["<SOS>"]
     EOS = stoi["<EOS>"]
     BLANK = stoi.get("<BLANK>", None)
     num_classes = len(itos)
-    logger.info(f"Charset loaded: {num_classes} tokens")
-    
+    logger.info(f"Charset loaded: {num_classes} tokens (BPE={bpe_vocab_size > 0})")
+
     # Копируем charset в папку эксперимента
     charset_dest = os.path.join(exp_dir, "charset.txt")
-    if not os.path.exists(charset_dest) or os.path.abspath(charset_path) != os.path.abspath(charset_dest):
+    if not os.path.exists(charset_dest) or os.path.abspath(
+        charset_path
+    ) != os.path.abspath(charset_dest):
         shutil.copy2(charset_path, charset_dest)
         logger.info(f"Charset copied to experiment dir: {charset_dest}")
 
@@ -913,10 +968,10 @@ def run_training(cfg: Config, device: str = "cuda"):
         )
 
     collate_train = OCRDatasetAttn.make_collate_attn(
-        stoi, max_len=max_len, drop_blank=True
+        stoi, max_len=max_len, drop_blank=True, tokenizer=tokenizer
     )
     collate_val = OCRDatasetAttn.make_collate_attn(
-        stoi, max_len=max_len, drop_blank=True
+        stoi, max_len=max_len, drop_blank=True, tokenizer=tokenizer
     )
 
     if train_proportions is not None:

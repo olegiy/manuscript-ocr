@@ -2,18 +2,13 @@ from manuscript.recognizers import TRBA
 
 if __name__ == "__main__":
     train_summary = TRBA.train(
-        resume_from=r"experiments\trba_exp_printed_256",
-        train_csvs=[
-            r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\labels.csv"
-        ],
+        train_csvs=[r"C:\shared\orig_cyrillic\train.tsv"],
         train_roots=[
-            r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\train\img", 
+            r"C:\shared\orig_cyrillic\train",
         ],
-        val_csvs=[
-            r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\labels.csv"
-        ],
+        val_csvs=[r"C:\shared\orig_cyrillic\test.tsv"],
         val_roots=[
-            r"C:\Users\USER\Desktop\archive_25_09\dataset\printed\val\img",
+            r"C:\shared\orig_cyrillic\test",
         ],
         exp_dir="experiments/trba_exp_printed_lite",
         max_len=40,
@@ -23,13 +18,14 @@ if __name__ == "__main__":
         num_encoder_layers=2,
         batch_size=64,
         cnn_backbone="seresnet31lite",
-        epochs=110,
+        epochs=55,
         lr=0.001,
         optimizer="AdamW",
         scheduler="OneCycleLR",
         device="cuda",
         pretrain_weights=True,
         val_interval=1,
+        bpe_vocab_size=512,
     )
 
     print(train_summary)

@@ -61,7 +61,7 @@ def load_charset(charset_path: str):
 
 class ResizeAndPadA(A.ImageOnlyTransform):
     """Кастомная трансформация для изменения размера и добавления отступов."""
-    
+
     def __init__(
         self,
         img_h=32,
@@ -112,7 +112,7 @@ class ResizeAndPadA(A.ImageOnlyTransform):
             y0 = self.img_h - new_h
         else:
             y0 = (self.img_h - new_h) // 2
-            
+
         x0 = max(0, min(x0, self.img_w - new_w))
         y0 = max(0, min(y0, self.img_h - new_h))
 
@@ -120,7 +120,7 @@ class ResizeAndPadA(A.ImageOnlyTransform):
         return canvas
 
 
-def pack_attention_targets(texts, stoi, max_len, drop_blank=True):
+def pack_attention_targets(texts, stoi, max_len, drop_blank=True, tokenizer=None):
     """Упаковка текстовых целей для attention модели."""
     PAD = stoi["<PAD>"]
     SOS = stoi["<SOS>"]
@@ -137,14 +137,24 @@ def pack_attention_targets(texts, stoi, max_len, drop_blank=True):
     lengths = torch.zeros(B, dtype=torch.long)
 
     for i, s in enumerate(texts):
-        ids = []
-        for ch in s:
-            if ch not in stoi:
-                continue
-            idx = stoi[ch]
-            if drop_blank and BLANK is not None and idx == BLANK:
-                continue
-            ids.append(idx)
+        if tokenizer is not None:
+            # Use BPE tokenizer
+            ids = tokenizer.encode(s)
+            # Filter out special tokens if they somehow got in (shouldn't happen with encode)
+            # But we might need to handle BLANK if it's in the vocab?
+            # BPE encode returns IDs directly.
+            if drop_blank and BLANK is not None:
+                ids = [x for x in ids if x != BLANK]
+        else:
+            # Character-level encoding
+            ids = []
+            for ch in s:
+                if ch not in stoi:
+                    continue
+                idx = stoi[ch]
+                if drop_blank and BLANK is not None and idx == BLANK:
+                    continue
+                ids.append(idx)
 
         L = min(len(ids), max_len)
         if L > 0:
