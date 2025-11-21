@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Union, Optional, List, Tuple, Sequence, Dict, Any
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
 import gdown
@@ -10,17 +10,17 @@ import onnxruntime as ort
 import torch
 from torch.utils.data import ConcatDataset
 
-from .._types import Word, Block, Page
+from .._types import Block, Page, Word
 from .dataset import EASTDataset
 from .east import EAST as EASTModel
 from .lanms import locality_aware_nms
 from .train_utils import _run_training
 from .utils import (
     decode_quads_from_maps,
-    read_image,
     expand_boxes,
-    visualize_page,
+    read_image,
     sort_boxes_reading_order_with_resolutions,
+    visualize_page,
 )
 
 
@@ -451,6 +451,7 @@ class EAST:
         focal_gamma: float = 2.0,
         resume_from: Optional[Union[str, Path]] = None,
         val_interval: int = 1,
+        num_workers: int = 0,
         device: Optional[torch.device] = None,
     ) -> torch.nn.Module:
         """
@@ -474,13 +475,11 @@ class EAST:
         model_name : str, optional
             Folder name inside ``experiment_root`` for logs and checkpoints.
             Default is ``"resnet_quad"``.
-        backbone_name : {"resnet50", "resnet101", "efficientnet_b5", "convnext_small"}, optional
+        backbone_name : {"resnet50", "resnet101"}, optional
             Backbone architecture to use. Options:
             
             - ``"resnet50"`` — ResNet-50 (faster, less parameters)
             - ``"resnet101"`` — ResNet-101 (slower, more capacity)
-            - ``"efficientnet_b5"`` — EfficientNet-B5 (efficient, modern)
-            - ``"convnext_small"`` — ConvNeXt-Small (modern CNN, excellent accuracy)
             
             Default is ``"resnet50"``.
         pretrained_backbone : bool, optional
@@ -538,6 +537,9 @@ class EAST:
             Default ``None``.
         val_interval : int, optional
             Run validation every N epochs. Default ``1``.
+        num_workers : int, optional
+            Number of worker processes for data loading. Set to 0 for single-process
+            loading (safer on Windows). Default ``0``.
         device : torch.device, optional
             CUDA or CPU device. Auto-selects if None.
 
@@ -574,7 +576,7 @@ class EAST:
         ...     train_anns=train_anns,
         ...     val_images=val_images,
         ...     val_anns=val_anns,
-        ...     backbone_name="efficientnet_b5",
+        ...     backbone_name="resnet50",
         ...     target_size=256,
         ...     epochs=20,
         ...     batch_size=4,
@@ -650,13 +652,12 @@ class EAST:
             val_images if isinstance(val_images, (list, tuple)) else [val_images]
         )
         val_anns_list = val_anns if isinstance(val_anns, (list, tuple)) else [val_anns]
-
         assert len(train_imgs_list) == len(
             train_anns_list
-        ), "train_images и train_anns должны иметь одинаковую длину"
+        ), "train_images and train_anns must have the same length"
         assert len(val_imgs_list) == len(
             val_anns_list
-        ), "val_images и val_anns должны иметь одинаковую длину"
+        ), "val_images and val_anns must have the same length"
 
         train_datasets = []
         train_name_counts: Dict[str, int] = {}
@@ -746,6 +747,7 @@ class EAST:
             use_focal_geo=use_focal_geo,
             focal_gamma=focal_gamma,
             val_interval=val_interval,
+            num_workers=num_workers,
             backbone_name=backbone_name,
             target_size=target_size,
             pretrained_backbone=pretrained_backbone,
@@ -780,7 +782,7 @@ class EAST:
             Path to the PyTorch model weights file (.pth).
         output_path : str or Path
             Path where the ONNX model will be saved (.onnx).
-        backbone_name : {"resnet50", "resnet101", "efficientnet_b5"}, optional
+        backbone_name : {"resnet50", "resnet101"}, optional
             Backbone architecture of the model. Must match the architecture
             used during training. Default is ``"resnet50"``.
         input_size : int, optional

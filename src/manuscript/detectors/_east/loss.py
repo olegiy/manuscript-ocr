@@ -23,30 +23,20 @@ class EASTLoss(nn.Module):
         self.focal_gamma = focal_gamma
 
     def forward(self, gt_score, pred_score, gt_geo, pred_geo):
-        # Если нет положительных пикселей — возвращаем ноль, но с requires_grad=True,
-        # чтобы .backward() сработал корректно.
         if torch.sum(gt_score) < 1:
             return torch.tensor(0.0, device=pred_score.device, requires_grad=True)
-
-        # classification loss
+        
         dice = compute_dice_loss(gt_score, pred_score)
-
-        # geometry loss (QUAD offsets, 8 channels)
-        # Compute L1 loss per channel
         diff = torch.abs(gt_geo - pred_geo)  # (B,8,H,W)
-        # Sum over channels to get per-pixel loss
         geo_loss_map = torch.sum(diff, dim=1)  # (B,H,W)
 
-        # Focal geometry if needed
         if self.use_focal_geo:
             p_t = torch.exp(-geo_loss_map)
             focal_weight = (1 - p_t) ** self.focal_gamma
             geo_loss_map = geo_loss_map * focal_weight
 
-        # Mask by gt_score
         geo_loss_map = geo_loss_map * gt_score.squeeze(1)
 
-        # OHEM or average
         if self.use_ohem:
             B = geo_loss_map.shape[0]
             geo_loss = 0.0

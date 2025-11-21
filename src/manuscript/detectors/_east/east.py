@@ -6,10 +6,6 @@ from torchvision.models import (
     ResNet50_Weights,
     resnet101,
     ResNet101_Weights,
-    efficientnet_b5,
-    EfficientNet_B5_Weights,
-    convnext_small,
-    ConvNeXt_Small_Weights,
 )
 from torchvision.models.feature_extraction import create_feature_extractor
 
@@ -61,37 +57,9 @@ class ResNetFeatureExtractor(nn.Module):
                 "layer4": "res4",
             }
 
-        elif backbone_name == "efficientnet_b5":
-            model = efficientnet_b5(
-                weights=EfficientNet_B5_Weights.DEFAULT if pretrained else None
-            )
-            # EfficientNet-B5 feature extraction
-            # Используем features.7 вместо features.6 для более глубоких признаков (512 vs 304 каналов)
-            # Это ближе к ResNet50 архитектуре где res4 имеет 2048 каналов
-            return_nodes = {
-                "features.2": "res1",  # 40 channels, stride=4
-                "features.3": "res2",  # 64 channels, stride=8
-                "features.4": "res3",  # 128 channels, stride=16
-                "features.7": "res4",  # 512 channels, stride=32 (было features.6 с 304 каналами)
-            }
-
-        elif backbone_name == "convnext_small":
-            model = convnext_small(
-                weights=ConvNeXt_Small_Weights.DEFAULT if pretrained else None
-            )
-            # ConvNeXt-Small feature extraction
-            # 4-stage architecture with progressive channel expansion
-            return_nodes = {
-                "features.1": "res1",  # 96 channels, stride=4
-                "features.3": "res2",  # 192 channels, stride=8
-                "features.5": "res3",  # 384 channels, stride=16
-                "features.7": "res4",  # 768 channels, stride=32
-            }
-
         else:
             raise ValueError(f"Unsupported backbone: {backbone_name}")
 
-        # --- опциональное замораживание первых слоёв ---
         if freeze_first:
             for name, param in model.named_parameters():
                 if any(k in name for k in ("conv_stem", "bn1", "features.0", "features.1")):
@@ -105,22 +73,9 @@ class ResNetFeatureExtractor(nn.Module):
 
 class FeatureMergingBranchResNet(nn.Module):
     def __init__(self, in_channels_list=(256, 512, 1024, 2048)):
-        """
-        Feature merging decoder for EAST.
-        
-        Parameters
-        ----------
-        in_channels_list : tuple of int
-            Number of channels for (res1, res2, res3, res4) features.
-            
-            - ResNet-50/101: (256, 512, 1024, 2048)
-            - EfficientNet-B5: (40, 64, 128, 512)
-            - ConvNeXt-Small: (96, 192, 384, 768)
-        """
         super().__init__()
         c1, c2, c3, c4 = in_channels_list
         
-        # Decoder blocks - уменьшаем каналы постепенно
         self.block1 = DecoderBlock(in_channels=c4, mid_channels=512, out_channels=512)
         self.block2 = DecoderBlock(
             in_channels=512 + c3, mid_channels=256, out_channels=256
@@ -165,32 +120,23 @@ class EAST(nn.Module):
         pretrained_model_path: str = None,
     ):
         super().__init__()
-        # backbone with choice
+
         self.backbone = ResNetFeatureExtractor(
             backbone_name=backbone_name,
             pretrained=pretrained_backbone,
             freeze_first=freeze_first,
         )
         
-        # Определяем размеры каналов в зависимости от backbone
         if backbone_name == "resnet50" or backbone_name == "resnet101":
             in_channels_list = (256, 512, 1024, 2048)
-        elif backbone_name == "efficientnet_b5":
-            # Обновлено: используем features.7 (512 каналов) вместо features.6 (304)
-            in_channels_list = (40, 64, 128, 512)
-        elif backbone_name == "convnext_small":
-            # ConvNeXt-Small channels: balanced architecture
-            in_channels_list = (96, 192, 384, 768)
         else:
             raise ValueError(f"Unsupported backbone: {backbone_name}")
         
         self.decoder = FeatureMergingBranchResNet(in_channels_list=in_channels_list)
         self.output_head = OutputHead()
-        # scales for maps (legacy behavior)
         self.score_scale = 0.25
         self.geo_scale = 0.25
 
-        # optional load weights
         if pretrained_model_path:
             state = torch.load(pretrained_model_path, map_location="cpu")
             self.load_state_dict(state, strict=False)

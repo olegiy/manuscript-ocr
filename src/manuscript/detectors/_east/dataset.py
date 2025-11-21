@@ -29,7 +29,7 @@ def shrink_poly(poly, shrink_ratio=0.3):
     N = poly.shape[0]
     if N != 4:
         raise ValueError("Expected quadrilateral with 4 vertices")
-    # signed area sign
+
     area = 0.0
     for i in range(N):
         x1, y1 = poly[i]
@@ -72,7 +72,7 @@ class EASTDataset(Dataset):
         self.dataset_name = (
             dataset_name if dataset_name is not None else Path(images_folder).stem
         )
-        # transform pipeline
+
         if transform is None:
             self.transform = transforms.Compose(
                 [
@@ -98,7 +98,7 @@ class EASTDataset(Dataset):
         invalid_ids = []
         for img_id in list(self.image_ids):
             anns = self.annots.get(img_id, [])
-            # проверяем: хотя бы одна аннотация с сегментацией, дающей >=4 точек
+
             has_valid = False
             for ann in anns:
                 seg = ann.get("segmentation")
@@ -109,14 +109,13 @@ class EASTDataset(Dataset):
                         break
             if not has_valid:
                 invalid_ids.append(img_id)
-        # убираем «битые» картинки из списка
         for img_id in invalid_ids:
             self.image_ids.remove(img_id)
             self.annots.pop(img_id, None)
 
         if invalid_ids:
             warnings.warn(
-                f"EASTDataset: найдено {len(invalid_ids)} изображений без годных квадов — они будут пропущены",
+                f"EASTDataset: found {len(invalid_ids)} images without valid quads — they will be skipped",
                 UserWarning,
             )
 
@@ -167,7 +166,7 @@ class EASTDataset(Dataset):
             ).astype(np.float32)
         else:
             rboxes = np.zeros((0, 5), dtype=np.float32)
-        # generate maps
+
         score_map, geo_map = self.compute_quad_maps(quads)
         img_tensor = self.transform(img_resized)
         target = {
@@ -178,10 +177,6 @@ class EASTDataset(Dataset):
         return img_tensor, target
 
     def compute_quad_maps(self, quads):
-        """
-        quads: list of (4,2) arrays
-        returns score_map (H',W') and geo_map (8,H',W')
-        """
         out_h = int(self.target_size * self.score_geo_scale)
         out_w = int(self.target_size * self.score_geo_scale)
         score_map = np.zeros((out_h, out_w), dtype=np.float32)

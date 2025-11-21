@@ -1,26 +1,3 @@
-"""
-EAST Detector Utilities
-
-Содержит утилиты для работы с EAST детектором:
-- Визуализация результатов
-- Конвертация форматов боксов
-- Оценка точности детекции (F1, Precision, Recall)
-
-Пример оценки точности:
-    >>> from manuscript.detectors._east.utils import evaluate_detection
-    >>> pred_boxes = [(10, 10, 50, 50), (60, 60, 100, 100)]
-    >>> gt_boxes = [(12, 12, 48, 48), (61, 61, 99, 99)]
-    >>> metrics = evaluate_detection(pred_boxes, gt_boxes, iou_threshold=0.5)
-    >>> print(f"F1: {metrics['f1']:.4f}")
-
-Пример оценки датасета:
-    >>> from manuscript.detectors._east.utils import evaluate_dataset
-    >>> predictions = {"img1.jpg": [(10, 10, 50, 50)]}
-    >>> ground_truths = {"img1.jpg": [(12, 12, 48, 48)]}
-    >>> metrics = evaluate_dataset(predictions, ground_truths)
-    >>> print(f"F1@0.5: {metrics['f1@0.5']:.4f}")
-"""
-
 import json
 import time
 from collections import defaultdict
@@ -410,33 +387,6 @@ def expand_boxes(
     expand_h: float = 0.0,
     expand_power: float = 1.0,
 ) -> np.ndarray:
-    """
-    Расширяет боксы с нелинейным масштабированием.
-
-    Parameters
-    ----------
-    quads : np.ndarray
-        Массив четырехугольников shape (N, 9) - 8 координат + score
-    expand_w : float
-        Коэффициент расширения по ширине
-    expand_h : float
-        Коэффициент расширения по высоте
-    expand_power : float
-        Степень для нелинейного масштабирования:
-        - 1.0 = линейное (маленькие и большие боксы увеличиваются одинаково)
-        - <1.0 = маленькие боксы увеличиваются сильнее (например, 0.5)
-        - >1.0 = большие боксы увеличиваются сильнее
-
-    Returns
-    -------
-    np.ndarray
-        Расширенные боксы
-
-    Notes
-    -----
-    Нелинейное увеличение полезно, так как маленькие боксы (символы) требуют
-    больше "запаса" для распознавания, чем большие боксы (слова).
-    """
     if len(quads) == 0 or (expand_w == 0 and expand_h == 0):
         return quads
 
@@ -462,20 +412,15 @@ def expand_boxes(
     n_avg = n1 + n2
     norm = np.linalg.norm(n_avg, axis=2, keepdims=True)
 
-    # Normalize, but if norm is too small (degenerate case), use n1 as fallback
     n_normalized = np.divide(n_avg, norm, out=np.zeros_like(n_avg), where=norm > 1e-6)
     degenerate_mask = (norm <= 1e-6).squeeze(-1)  # shape: (N, 4)
     n_normalized[degenerate_mask] = n1[
         degenerate_mask
-    ]  # fallback to n1 when degenerate
+    ]
 
     offset = np.minimum(len1, len2)
 
-    # Нелинейное масштабирование: маленькие боксы увеличиваются сильнее при expand_power < 1.0
-    # Нормализуем offset для стабильности (используем среднее значение как референс)
     if expand_power != 1.0:
-        # Применяем степенную функцию к нормализованному offset
-        # Это делает малые значения offset относительно больше при power < 1
         offset_scaled = np.power(offset, expand_power)
     else:
         offset_scaled = offset

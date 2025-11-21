@@ -1,6 +1,6 @@
+import json
 import os
 import random
-import json
 from collections import OrderedDict
 from typing import Optional, Sequence
 
@@ -12,16 +12,13 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
+from .lanms import locality_aware_nms
 from .loss import EASTLoss
 from .sam import SAMSolver
 from .utils import create_collage, decode_quads_from_maps
-from .lanms import locality_aware_nms
 
 
-def _dice_coefficient(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6):
-    """
-    Computes per-sample soft Dice score between prediction and target maps.
-    """
+def dice_coefficient(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6):
     pred_flat = pred.view(pred.shape[0], -1)
     target_flat = target.view(target.shape[0], -1)
     numerator = 2.0 * torch.sum(pred_flat * target_flat, dim=1)
@@ -51,6 +48,7 @@ def _run_training(
     use_focal_geo: bool,
     focal_gamma: float,
     val_interval: int = 1,
+    num_workers: int = 0,
     *,
     backbone_name: Optional[str] = None,
     target_size: Optional[int] = None,
@@ -60,17 +58,12 @@ def _run_training(
     resume: bool = False,
     resume_state_path: Optional[str] = None,
 ):
-    """
-    Core training loop. Saves logs and checkpoints under experiment_dir.
-    """
-    # Setup directories
     experiment_dir = os.path.abspath(os.fspath(experiment_dir))
     log_dir = os.path.join(experiment_dir, "logs")
     ckpt_dir = os.path.join(experiment_dir, "checkpoints")
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # Save training configuration
     config = {
         "backbone_name": backbone_name,
         "pretrained_backbone": pretrained_backbone,
@@ -110,15 +103,14 @@ def _run_training(
     if val_interval < 1:
         raise ValueError("val_interval must be >= 1")
 
-    # DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,  # Windows может зависать с multiprocessing
+        num_workers=num_workers,
         collate_fn=_custom_collate_fn,
         pin_memory=True,
-        persistent_workers=False,
+        persistent_workers=num_workers > 0,
     )
 
     if val_datasets:
@@ -135,9 +127,10 @@ def _run_training(
                     dataset,
                     batch_size=batch_size,
                     shuffle=False,
-                    num_workers=0,
+                    num_workers=num_workers,
                     collate_fn=_custom_collate_fn,
                     pin_memory=False,
+                    persistent_workers=num_workers > 0,
                 ),
             )
             for name, dataset in collage_sources
@@ -151,14 +144,15 @@ def _run_training(
                     val_dataset,
                     batch_size=batch_size,
                     shuffle=False,
-                    num_workers=0,
+                    num_workers=num_workers,
                     collate_fn=_custom_collate_fn,
                     pin_memory=False,
+                    persistent_workers=num_workers > 0,
                 ),
             )
         ]
 
-    # Optimizer & Scheduler
+
     if use_sam:
         optimizer = SAMSolver(
             model.parameters(),
@@ -173,8 +167,6 @@ def _run_training(
             toptim.Lookahead(base_opt, k=5, alpha=0.5) if use_lookahead else base_opt
         )
 
-    # torch>=2.2 expects these attributes; some custom optimizers (e.g. Lookahead)
-    # from torch-optimizer do not define them, so create empty registries on demand.
     hook_attrs = [
         "_optimizer_state_dict_pre_hooks",
         "_optimizer_state_dict_post_hooks",
@@ -185,7 +177,6 @@ def _run_training(
         if not hasattr(optimizer, attr):
             setattr(optimizer, attr, OrderedDict())
 
-    # Плавное снижение learning rate с cosine annealing (без перезапусков)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=num_epochs,
@@ -210,9 +201,9 @@ def _run_training(
         focal_gamma=focal_gamma,
     )
 
-    # EMA model copy
+
     ema_model = model if not use_ema else torch.deepcopy(model)
-    ema_decay = 0.9999  # EMA decay rate
+    ema_decay = 0.9999
     if use_ema:
         for p in ema_model.parameters():
             p.requires_grad = False
@@ -245,7 +236,7 @@ def _run_training(
     def _sanitize_tag(name: str) -> str:
         return name.replace("\\", "_").replace("/", "_").replace(" ", "_")
 
-    collage_cell_size = 480  # Уменьшено с 960 до 480 (в 2 раза)
+    collage_cell_size = 480
     collage_samples = 4
 
     def make_collage(tag: str, epoch: int):
@@ -276,13 +267,11 @@ def _run_training(
         writer.close()
         return ema_model if use_ema else model
 
-    # Training epochs
     for epoch in range(start_epoch, num_epochs + 1):
         model.train()
         train_loss = 0.0
-        optimizer.zero_grad()  # Zero grad once at start of epoch
+        optimizer.zero_grad()
         
-        # Вычисляем global_step для логирования каждого батча
         global_step = (epoch - 1) * len(train_loader)
         
         for batch_idx, (imgs, tgt) in enumerate(tqdm(train_loader, desc=f"Train {epoch}"), 1):
@@ -290,7 +279,6 @@ def _run_training(
             gt_s = tgt["score_map"].to(device)
             gt_g = tgt["geo_map"].to(device)
 
-            # Optional multiscale
             if use_multiscale:
                 sf = random.uniform(0.8, 1.2)
                 H, W = imgs.shape[-2:]
@@ -319,9 +307,9 @@ def _run_training(
                         align_corners=False,
                     )
                     loss = criterion(gt_s, ps, gt_g, pg)
-                    return loss / accumulation_steps  # Scale loss for accumulation
+                    return loss / accumulation_steps
 
-                loss = optimizer.step(closure) * accumulation_steps  # Unscale for logging
+                loss = optimizer.step(closure) * accumulation_steps
             else:
                 with autocast_ctx():
                     out = model(imgs_in)
@@ -338,12 +326,12 @@ def _run_training(
                         align_corners=False,
                     )
                     loss = criterion(gt_s, ps, gt_g, pg)
-                    # Scale loss for gradient accumulation
+
                     loss = loss / accumulation_steps
                 
                 scaler.scale(loss).backward()
                 
-                # Only step optimizer every accumulation_steps
+
                 if batch_idx % accumulation_steps == 0:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -351,17 +339,15 @@ def _run_training(
                     scaler.update()
                     optimizer.zero_grad()
                 
-                # Unscale loss for logging
+
                 loss = loss * accumulation_steps
 
             scheduler.step(epoch + imgs.size(0) / len(train_loader))
             train_loss += loss.item()
             
-            # Логируем каждый батч
             current_step = global_step + batch_idx
             writer.add_scalar("Loss/Train_Step", loss.item(), current_step)
-            
-            # Update EMA model weights
+
             if use_ema:
                 with torch.no_grad():
                     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
@@ -370,7 +356,6 @@ def _run_training(
         avg_train = train_loss / len(train_loader)
         writer.add_scalar("Loss/Train", avg_train, epoch)
         
-        # Очистка GPU кеша между эпохами
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -421,7 +406,7 @@ def _run_training(
                         total_val_loss += batch_loss
                         total_val_batches += 1
 
-                        dice_vals = _dice_coefficient(ps, gt_s)
+                        dice_vals = dice_coefficient(ps, gt_s)
                         dataset_dice_sum += dice_vals.sum().item()
                         dataset_dice_count += dice_vals.numel()
                         overall_dice_sum += dice_vals.sum().item()
@@ -466,11 +451,9 @@ def _run_training(
 
             make_collage(f"epoch{epoch}", epoch)
             
-            # Очистка GPU памяти после валидации
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-        # Save checkpoints and state
         torch.save(
             (ema_model if use_ema else model).state_dict(),
             os.path.join(ckpt_dir, "last.pth"),
@@ -516,12 +499,10 @@ def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
         ps = out["score"][0].cpu().numpy().squeeze(0)
         pg = out["geometry"][0].cpu().numpy().transpose(1, 2, 0)
 
-        # Decode quads from maps
         pred_r = decode_quads_from_maps(
             ps, pg, score_thresh=0.7, scale=1 / model.score_scale, quantization=1
         )
         
-        # Apply NMS exactly like in real inference
         if len(pred_r) > 0:
             pred_r = locality_aware_nms(
                 pred_r.astype(np.float32), 
