@@ -130,9 +130,10 @@ print("=" * 80)
 
 model_pth = TRBAModel(
     num_classes=len(itos),
-    max_length=max_len,
     hidden_size=hidden_size,
     num_encoder_layers=num_encoder_layers,
+    img_h=img_h,
+    img_w=img_w,
     cnn_in_channels=cnn_in_channels,
     cnn_out_channels=cnn_out_channels,
     cnn_backbone=cnn_backbone,

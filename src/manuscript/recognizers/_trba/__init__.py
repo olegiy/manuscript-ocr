@@ -935,7 +935,7 @@ class TRBA:
         print(f"Hidden size: {hidden_size}")
         print(f"Num classes: {num_classes}")
 
-        # Create PyTorch model with correct num_classes
+        # Create PyTorch model with correct num_classes and token IDs
         print(f"\nCreating model architecture...")
         model = TRBAModel(
             num_classes=num_classes,
@@ -946,9 +946,20 @@ class TRBA:
             cnn_in_channels=cnn_in_channels,
             cnn_out_channels=cnn_out_channels,
             cnn_backbone=cnn_backbone,
+            sos_id=stoi["<SOS>"],
+            eos_id=stoi["<EOS>"],
+            pad_id=stoi["<PAD>"],
+            blank_id=stoi.get("<BLANK>", None),  # ВАЖНО: не путать с пробелом!
             use_ctc_head=False,  # ONNX export only needs attention head
             use_attention_head=True,
         )
+        
+        print(f"   Token IDs:")
+        print(f"      SOS:   {stoi['<SOS>']}")
+        print(f"      EOS:   {stoi['<EOS>']}")
+        print(f"      PAD:   {stoi['<PAD>']}")
+        print(f"      BLANK: {stoi.get('<BLANK>', None)}")
+        print(f"      SPACE: {stoi.get(' ', 'NOT FOUND')}")
 
         # Load weights
         print(f"Loading weights into model...")
