@@ -1561,4 +1561,24 @@ def run_training(cfg: Config, device: str = "cuda"):
 
     writer.close()
     logger.info("Training finished.")
+    
+    try:
+        logger.info("Attempting to export best model to ONNX...")
+        from manuscript.recognizers._trba import export_to_onnx
+        
+        onnx_path = os.path.join(exp_dir, "best_acc_model.onnx")
+        config_path = os.path.join(exp_dir, "config.json")
+        
+        export_to_onnx(
+            weights_path=best_acc_weights_path,
+            config_path=config_path,
+            charset_path=charset_dest,
+            output_path=onnx_path,
+            opset_version=14,
+            simplify=True,
+        )
+        logger.info(f"ONNX model exported successfully: {onnx_path}")
+    except Exception as e:
+        logger.warning(f"Failed to export ONNX model: {e}")
+    
     return {"val_acc": best_val_acc, "val_loss": best_val_loss, "exp_dir": exp_dir}

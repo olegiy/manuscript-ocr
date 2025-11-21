@@ -18,18 +18,23 @@ from .training.train import Config, run_training
 
 
 class TRBA:
-    _DEFAULT_PRESET_NAME = "exp_1_baseline"
+    _DEFAULT_PRESET_NAME = "trba_exp_lite"
     _DEFAULT_RELEASE_WEIGHTS_URL = (
         "https://github.com/konstantinkozhin/manuscript-ocr/"
-        "releases/download/v0.1.0/trba_exp_1_64.onnx"
+        "releases/download/v0.1.0/trba_exp_lite.onnx"
     )
     _DEFAULT_RELEASE_CONFIG_URL = (
         "https://github.com/konstantinkozhin/manuscript-ocr/"
-        "releases/download/v0.1.0/trba_exp_1_64.json"
+        "releases/download/v0.1.0/trba_exp_lite.json"
+    )
+    _DEFAULT_RELEASE_CHARSET_URL = (
+        "https://github.com/konstantinkozhin/manuscript-ocr/"
+        "releases/download/v0.1.0/trba_exp_lite.txt"
     )
     _DEFAULT_STORAGE_ROOT = Path.home() / ".manuscript" / "trba"
-    _DEFAULT_WEIGHTS_FILENAME = "weights.onnx"
-    _DEFAULT_CONFIG_FILENAME = "config.json"
+    _DEFAULT_WEIGHTS_FILENAME = "trba_exp_lite.onnx"
+    _DEFAULT_CONFIG_FILENAME = "trba_exp_lite.json"
+    _DEFAULT_CHARSET_FILENAME = "charset.txt"
 
     def __init__(
         self,
@@ -46,10 +51,11 @@ class TRBA:
         weights_path : str or Path, optional
             Path to the ONNX model file (.onnx). If ``None``,
             default pretrained ONNX model will be automatically downloaded to
-            ``~/.manuscript/trba/exp_1_baseline/weights.onnx``.
+            ``~/.manuscript/trba/trba_exp_lite/trba_exp_lite.onnx``.
         charset_path : str or Path, optional
-            Path to character set file. If ``None``, uses the default charset
-            located at ``configs/charset.txt`` within the package.
+            Path to character set file. If ``None``, uses charset from
+            downloaded model or falls back to package default at
+            ``configs/charset.txt``.
         config_path : str or Path, optional
             Path to model configuration JSON file. If ``None``, attempts to
             infer config path from model location or downloads default config
@@ -106,20 +112,16 @@ class TRBA:
             --output model.onnx
         ```
         """
-        resolved_model_path, resolved_config_path = (
+        resolved_model_path, resolved_config_path, resolved_charset_path = (
             self._resolve_model_and_config_paths(
                 weights_path,
                 config_path,
+                charset_path,
             )
         )
 
         self.model_path = resolved_model_path
-
-        if charset_path is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            charset_path = os.path.join(current_dir, "configs", "charset.txt")
-
-        self.charset_path = os.fspath(charset_path)
+        self.charset_path = resolved_charset_path
         self.config_path = resolved_config_path
 
         if not os.path.exists(self.charset_path):
@@ -143,7 +145,7 @@ class TRBA:
         # Определяем device для ONNX Runtime
         self.device = device or ("cuda" if ort.get_device() == "GPU" else "cpu")
 
-        self.itos, self.stoi = load_charset(charset_path)
+        self.itos, self.stoi = load_charset(self.charset_path)
         self.pad_id = self.stoi["<PAD>"]
         self.sos_id = self.stoi["<SOS>"]
         self.eos_id = self.stoi["<EOS>"]
@@ -171,7 +173,8 @@ class TRBA:
         self,
         model_path: Optional[str],
         config_path: Optional[str],
-    ) -> Tuple[str, Optional[str]]:
+        charset_path: Optional[str],
+    ) -> Tuple[str, Optional[str], str]:
         if model_path is None:
             return self._ensure_default_artifacts(config_path)
 
@@ -192,7 +195,20 @@ class TRBA:
                 resolved_model_path
             )
 
-        return resolved_model_path, resolved_config_path
+        # Resolve charset
+        if charset_path is None:
+            # Try to find charset near model
+            charset_from_model = self._infer_charset_path_from_weights(resolved_model_path)
+            if charset_from_model:
+                resolved_charset_path = charset_from_model
+            else:
+                # Fallback to package default
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                resolved_charset_path = os.path.join(current_dir, "configs", "charset.txt")
+        else:
+            resolved_charset_path = os.fspath(charset_path)
+
+        return resolved_model_path, resolved_config_path, resolved_charset_path
 
     def _infer_config_path_from_weights(self, weights_path: str) -> Optional[str]:
         weights_file = Path(weights_path)
@@ -206,18 +222,32 @@ class TRBA:
                 return os.fspath(candidate)
         return None
 
+    def _infer_charset_path_from_weights(self, weights_path: str) -> Optional[str]:
+        weights_file = Path(weights_path)
+        candidates = [
+            weights_file.with_suffix(".txt"),
+            weights_file.parent / "charset.txt",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return os.fspath(candidate)
+        return None
+
     def _ensure_default_artifacts(
         self,
         config_path: Optional[str],
-    ) -> Tuple[str, Optional[str]]:
+    ) -> Tuple[str, Optional[str], str]:
         storage_root = self._DEFAULT_STORAGE_ROOT.expanduser()
         target_dir = storage_root / self._DEFAULT_PRESET_NAME
         target_dir.mkdir(parents=True, exist_ok=True)
 
+        # Download weights
         weights_dest = target_dir / self._DEFAULT_WEIGHTS_FILENAME
         if not weights_dest.exists():
             self._download_file(self._DEFAULT_RELEASE_WEIGHTS_URL, weights_dest)
 
+        # Download config
         if config_path is not None:
             resolved_config_path = os.fspath(config_path)
             if not os.path.exists(resolved_config_path):
@@ -230,7 +260,12 @@ class TRBA:
                 self._download_file(self._DEFAULT_RELEASE_CONFIG_URL, config_dest)
             resolved_config_path = os.fspath(config_dest)
 
-        return os.fspath(weights_dest), resolved_config_path
+        # Download charset
+        charset_dest = target_dir / self._DEFAULT_CHARSET_FILENAME
+        if not charset_dest.exists():
+            self._download_file(self._DEFAULT_RELEASE_CHARSET_URL, charset_dest)
+
+        return os.fspath(weights_dest), resolved_config_path, os.fspath(charset_dest)
 
     def _download_file(self, url: str, destination: Path) -> None:
         if gdown is None:

@@ -434,58 +434,6 @@ def expand_boxes(
     return expanded.astype(np.float32)
 
 
-def poly_iou(segA, segB):
-    A = Polygon(np.array(segA).reshape(-1, 2))
-    B = Polygon(np.array(segB).reshape(-1, 2))
-    if not A.is_valid or not B.is_valid:
-        return 0.0
-    inter = A.intersection(B).area
-    union = A.union(B).area
-    return inter / union if union > 0 else 0.0
-
-
-def compute_f1(preds, thresh, gt_segs, processed_ids):
-    gt_polys = {
-        iid: [Polygon(np.array(seg).reshape(-1, 2)) for seg in gt_segs.get(iid, [])]
-        for iid in processed_ids
-    }
-    pred_polys = [
-        {
-            "image_id": p["image_id"],
-            "polygon": Polygon(np.array(p["segmentation"]).reshape(-1, 2)),
-        }
-        for p in preds
-    ]
-
-    used = {iid: [False] * len(gt_polys.get(iid, [])) for iid in processed_ids}
-    tp = fp = 0
-    for p, pred_poly in zip(preds, pred_polys):
-        image_id = p["image_id"]
-        pred_polygon = pred_poly["polygon"]
-        if not pred_polygon.is_valid:
-            fp += 1
-            continue
-        best_iou, bj = 0, -1
-        for j, gt_polygon in enumerate(gt_polys.get(image_id, [])):
-            if used[image_id][j] or not gt_polygon.is_valid:
-                continue
-            inter = pred_polygon.intersection(gt_polygon).area
-            union = pred_polygon.union(gt_polygon).area
-            iou = inter / union if union > 0 else 0
-            if iou > best_iou:
-                best_iou, bj = iou, j
-        if best_iou >= thresh:
-            tp += 1
-            used[image_id][bj] = True
-        else:
-            fp += 1
-    total_gt = sum(len(v) for v in gt_polys.values())
-    fn = total_gt - tp
-    prec = tp / (tp + fp) if tp + fp > 0 else 0
-    rec = tp / (tp + fn) if tp + fn > 0 else 0
-    return 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0
-
-
 def read_image(img_or_path):
     if isinstance(img_or_path, (str, Path)):
         img = cv2.imread(str(img_or_path))
@@ -656,63 +604,10 @@ def sort_boxes_reading_order_with_resolutions(
     return [mapping[b] for b in sorted_compressed]
 
 
-"""
-def load_gt(gt_path):
-    with open(gt_path, "r", encoding="utf-8") as f:
-        gt_coco = json.load(f)
-    gt_segs = defaultdict(list)
-    for ann in gt_coco["annotations"]:
-        seg = ann.get("segmentation", [])
-        if seg:
-            gt_segs[ann["image_id"]].append(seg[0])
-    return gt_segs
-
-
-def load_preds(pred_path):
-    with open(pred_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    preds_list = data.get("annotations", data)
-    preds = []
-    for p in preds_list:
-        seg = p.get("segmentation", [])
-        if not seg:
-            continue
-        preds.append(
-            {
-                "image_id": p["image_id"],
-                "segmentation": seg[0],
-                "score": p.get("score", 1.0),
-            }
-        )
-    return preds
-"""
-
-
 def box_iou(box1, box2):
-    """
-    Вычисляет IoU между двумя прямоугольными боксами.
-
-    Parameters
-    ----------
-    box1 : tuple or list
-        Бокс в формате (x_min, y_min, x_max, y_max)
-    box2 : tuple or list
-        Бокс в формате (x_min, y_min, x_max, y_max)
-
-    Returns
-    -------
-    float
-        IoU значение в диапазоне [0, 1]
-
-    Examples
-    --------
-    >>> iou = box_iou((10, 10, 50, 50), (30, 30, 70, 70))
-    >>> print(f"IoU: {iou:.3f}")
-    """
     x1_min, y1_min, x1_max, y1_max = box1
     x2_min, y2_min, x2_max, y2_max = box2
 
-    # Intersection
     inter_x_min = max(x1_min, x2_min)
     inter_y_min = max(y1_min, y2_min)
     inter_x_max = min(x1_max, x2_max)
@@ -723,7 +618,6 @@ def box_iou(box1, box2):
 
     inter_area = (inter_x_max - inter_x_min) * (inter_y_max - inter_y_min)
 
-    # Union
     area1 = (x1_max - x1_min) * (y1_max - y1_min)
     area2 = (x2_max - x2_min) * (y2_max - y2_min)
     union_area = area1 + area2 - inter_area
@@ -735,29 +629,6 @@ def box_iou(box1, box2):
 
 
 def match_boxes(pred_boxes, gt_boxes, iou_threshold=0.5):
-    """
-    Сопоставляет предсказанные боксы с ground truth боксами.
-
-    Parameters
-    ----------
-    pred_boxes : list of tuple
-        Список предсказанных боксов в формате (x_min, y_min, x_max, y_max)
-    gt_boxes : list of tuple
-        Список ground truth боксов в формате (x_min, y_min, x_max, y_max)
-    iou_threshold : float
-        Порог IoU для считывания match
-
-    Returns
-    -------
-    tuple
-        (true_positives, false_positives, false_negatives)
-
-    Examples
-    --------
-    >>> pred = [(10, 10, 50, 50), (60, 60, 100, 100)]
-    >>> gt = [(12, 12, 48, 48)]
-    >>> tp, fp, fn = match_boxes(pred, gt, iou_threshold=0.5)
-    """
     if len(gt_boxes) == 0 and len(pred_boxes) == 0:
         return 0, 0, 0
 
@@ -766,18 +637,15 @@ def match_boxes(pred_boxes, gt_boxes, iou_threshold=0.5):
 
     if len(pred_boxes) == 0:
         return 0, 0, len(gt_boxes)
-
-    # Матрица IoU
+    
     iou_matrix = np.zeros((len(pred_boxes), len(gt_boxes)))
     for i, pred in enumerate(pred_boxes):
         for j, gt in enumerate(gt_boxes):
             iou_matrix[i, j] = box_iou(pred, gt)
 
-    # Greedy matching: каждый pred сопоставляется с лучшим gt
     matched_gt = set()
     matched_pred = set()
 
-    # Сортируем все пары по убыванию IoU
     matches = []
     for i in range(len(pred_boxes)):
         for j in range(len(gt_boxes)):
@@ -786,7 +654,6 @@ def match_boxes(pred_boxes, gt_boxes, iou_threshold=0.5):
 
     matches.sort(reverse=True)
 
-    # Выбираем лучшие совпадения
     for iou_val, i, j in matches:
         if i not in matched_pred and j not in matched_gt:
             matched_pred.add(i)
@@ -800,28 +667,6 @@ def match_boxes(pred_boxes, gt_boxes, iou_threshold=0.5):
 
 
 def compute_f1_score(true_positives, false_positives, false_negatives):
-    """
-    Вычисляет F1 score по TP, FP, FN.
-
-    Parameters
-    ----------
-    true_positives : int
-        Количество истинных положительных
-    false_positives : int
-        Количество ложных положительных
-    false_negatives : int
-        Количество ложных отрицательных
-
-    Returns
-    -------
-    tuple
-        (f1_score, precision, recall)
-
-    Examples
-    --------
-    >>> f1, prec, rec = compute_f1_score(80, 10, 10)
-    >>> print(f"F1: {f1:.3f}, Precision: {prec:.3f}, Recall: {rec:.3f}")
-    """
     if true_positives == 0:
         return 0.0, 0.0, 0.0
 
@@ -843,103 +688,7 @@ def compute_f1_score(true_positives, false_positives, false_negatives):
     return f1, precision, recall
 
 
-def evaluate_detection(pred_boxes, gt_boxes, iou_threshold=0.5):
-    """
-    Оценивает качество детекции для одного изображения.
-
-    Parameters
-    ----------
-    pred_boxes : list of tuple
-        Список предсказанных боксов в формате (x_min, y_min, x_max, y_max)
-    gt_boxes : list of tuple
-        Список ground truth боксов в формате (x_min, y_min, x_max, y_max)
-    iou_threshold : float
-        Порог IoU для считывания match
-
-    Returns
-    -------
-    dict
-        {"tp": int, "fp": int, "fn": int, "f1": float, "precision": float, "recall": float}
-
-    Examples
-    --------
-    >>> pred = [(10, 10, 50, 50), (60, 60, 100, 100)]
-    >>> gt = [(12, 12, 48, 48), (61, 61, 99, 99)]
-    >>> metrics = evaluate_detection(pred, gt, iou_threshold=0.5)
-    """
-    tp, fp, fn = match_boxes(pred_boxes, gt_boxes, iou_threshold)
-    f1, precision, recall = compute_f1_score(tp, fp, fn)
-
-    return {
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "f1": f1,
-        "precision": precision,
-        "recall": recall,
-    }
-
-
-def evaluate_detection_multi_iou(pred_boxes, gt_boxes, iou_thresholds=None):
-    """
-    Оценивает качество детекции для одного изображения с несколькими порогами IoU.
-
-    Parameters
-    ----------
-    pred_boxes : list of tuple
-        Список предсказанных боксов в формате (x_min, y_min, x_max, y_max)
-    gt_boxes : list of tuple
-        Список ground truth боксов в формате (x_min, y_min, x_max, y_max)
-    iou_thresholds : list of float, optional
-        Список порогов IoU. По умолчанию [0.5, 0.55, 0.6, ..., 0.95]
-
-    Returns
-    -------
-    dict
-        Метрики для каждого порога + средние значения
-
-    Examples
-    --------
-    >>> pred = [(10, 10, 50, 50)]
-    >>> gt = [(12, 12, 48, 48)]
-    >>> metrics = evaluate_detection_multi_iou(pred, gt)
-    >>> print(f"F1@0.5: {metrics['f1@0.5']:.3f}")
-    >>> print(f"F1@0.5:0.95: {metrics['f1@0.5:0.95']:.3f}")
-    """
-    if iou_thresholds is None:
-        iou_thresholds = np.arange(0.5, 1.0, 0.05).tolist()
-
-    results = {}
-    f1_scores = []
-
-    for threshold in iou_thresholds:
-        metrics = evaluate_detection(pred_boxes, gt_boxes, iou_threshold=threshold)
-        results[f"f1@{threshold:.2f}"] = metrics["f1"]
-        results[f"precision@{threshold:.2f}"] = metrics["precision"]
-        results[f"recall@{threshold:.2f}"] = metrics["recall"]
-        f1_scores.append(metrics["f1"])
-
-    # Специальные метрики
-    results["f1@0.5"] = results.get("f1@0.50", 0.0)
-    results["f1@0.5:0.95"] = float(np.mean(f1_scores))
-
-    return results
-
-
 def _evaluate_image_worker(args):
-    """
-    Рабочая функция для параллельной оценки одного изображения.
-
-    Parameters
-    ----------
-    args : tuple
-        (image_id, pred_boxes, gt_boxes, iou_thresholds)
-
-    Returns
-    -------
-    dict
-        Словарь {threshold: (tp, fp, fn)} для всех порогов
-    """
     image_id, pred_boxes, gt_boxes, iou_thresholds = args
     results = {}
 
@@ -953,61 +702,24 @@ def _evaluate_image_worker(args):
 def evaluate_dataset(
     predictions, ground_truths, iou_thresholds=None, verbose=True, n_jobs=None
 ):
-    """
-    Оценивает качество детекции на всем датасете.
-
-    Parameters
-    ----------
-    predictions : dict
-        Словарь {image_id: list of boxes}, где boxes в формате (x_min, y_min, x_max, y_max)
-    ground_truths : dict
-        Словарь {image_id: list of boxes}, где boxes в формате (x_min, y_min, x_max, y_max)
-    iou_thresholds : list of float, optional
-        Список порогов IoU
-    verbose : bool
-        Печатать прогресс
-    n_jobs : int, optional
-        Количество процессов для параллельной обработки.
-        None - использовать все доступные CPU
-        1 - последовательная обработка
-        >1 - указанное количество процессов
-
-    Returns
-    -------
-    dict
-        Агрегированные метрики по всему датасету
-
-    Examples
-    --------
-    >>> preds = {"img1": [(10, 10, 50, 50)], "img2": [(20, 20, 60, 60)]}
-    >>> gts = {"img1": [(12, 12, 48, 48)], "img2": [(22, 22, 58, 58)]}
-    >>> metrics = evaluate_dataset(preds, gts)
-    >>> print(f"Dataset F1@0.5: {metrics['f1@0.5']:.3f}")
-    >>> # С параллельной обработкой (работает на Windows)
-    >>> metrics = evaluate_dataset(preds, gts, n_jobs=4)
-    """
     if iou_thresholds is None:
         iou_thresholds = np.arange(0.5, 1.0, 0.05).tolist()
 
-    # Собираем метрики по каждому порогу
     total_tp = {th: 0 for th in iou_thresholds}
     total_fp = {th: 0 for th in iou_thresholds}
     total_fn = {th: 0 for th in iou_thresholds}
 
     all_image_ids = list(set(list(predictions.keys()) + list(ground_truths.keys())))
 
-    # Определяем, использовать ли параллельную обработку
     use_parallel = n_jobs is None or n_jobs > 1
 
     if use_parallel:
         import multiprocessing as mp
         from multiprocessing import Pool
-
-        # Для Windows используем 'spawn' контекст
+    
         if n_jobs is None:
             n_jobs = mp.cpu_count()
 
-        # Подготавливаем аргументы для воркеров
         worker_args = [
             (
                 image_id,
@@ -1018,11 +730,9 @@ def evaluate_dataset(
             for image_id in all_image_ids
         ]
 
-        # Используем spawn для совместимости с Windows
         ctx = mp.get_context("spawn")
         with ctx.Pool(processes=n_jobs) as pool:
             if verbose:
-                # tqdm с imap для отображения прогресса
                 image_results = list(
                     tqdm(
                         pool.imap(_evaluate_image_worker, worker_args),
@@ -1033,14 +743,12 @@ def evaluate_dataset(
             else:
                 image_results = pool.map(_evaluate_image_worker, worker_args)
 
-        # Агрегируем результаты
         for result in image_results:
             for threshold, (tp, fp, fn) in result.items():
                 total_tp[threshold] += tp
                 total_fp[threshold] += fp
                 total_fn[threshold] += fn
     else:
-        # Последовательная обработка
         iterator = (
             tqdm(all_image_ids, desc="Evaluating images") if verbose else all_image_ids
         )
@@ -1055,7 +763,6 @@ def evaluate_dataset(
                 total_fp[threshold] += fp
                 total_fn[threshold] += fn
 
-    # Вычисляем агрегированные метрики
     results = {}
     f1_scores = []
 
@@ -1075,7 +782,6 @@ def evaluate_dataset(
 
         f1_scores.append(f1)
 
-    # Специальные метрики
     results["f1@0.5"] = results.get("f1@0.50", 0.0)
     results["precision@0.5"] = results.get("precision@0.50", 0.0)
     results["recall@0.5"] = results.get("recall@0.50", 0.0)

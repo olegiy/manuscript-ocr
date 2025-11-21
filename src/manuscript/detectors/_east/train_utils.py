@@ -474,6 +474,27 @@ def _run_training(
             break
 
     writer.close()
+    
+    try:
+        print("Attempting to export best model to ONNX...")
+        from manuscript.detectors._east.east import EAST
+        
+        onnx_path = os.path.join(ckpt_dir, "best_model.onnx")
+        best_weights_path = os.path.join(ckpt_dir, "best.pth")
+        
+        export_size = target_size if target_size is not None else 1280
+        
+        EAST.export_to_onnx(
+            weights_path=best_weights_path,
+            output_path=onnx_path,
+            input_size=export_size,
+            opset_version=14,
+            simplify=True,
+        )
+        print(f"ONNX model exported successfully: {onnx_path}")
+    except Exception as e:
+        print(f"Failed to export ONNX model: {e}")
+    
     return ema_model
 
 

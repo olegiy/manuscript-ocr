@@ -251,7 +251,7 @@ class EAST:
         vis: bool = False,
         profile: bool = False,
         return_maps: bool = False,
-        sort_reading_order: bool = False,
+        sort_reading_order: bool = True,
     ) -> Dict[str, Any]:
         """
         Run EAST inference and return detection results.
@@ -272,7 +272,7 @@ class EAST:
             ``"score_map"`` and ``"geo_map"``. Default is False.
         sort_reading_order : bool, optional
             If True, sorts detected words in natural reading order
-            (left-to-right, top-to-bottom). Default is False.
+            (left-to-right, top-to-bottom). Default is True.
 
         Returns
         -------
