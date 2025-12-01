@@ -1,3 +1,4 @@
+```mermaid
 mindmap
   root((OCR Data Model))
     Page
@@ -11,3 +12,4 @@ mindmap
       text("Recognized text (optional)")
       recognition_confidence("Recognition score 0.0–1.0")
       order("Word reading-order position\nNone before sorting")
+```
