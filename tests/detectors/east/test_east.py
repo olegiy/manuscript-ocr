@@ -6,7 +6,7 @@ from manuscript.detectors._east.east import (
     ResNetFeatureExtractor,
     FeatureMergingBranchResNet,
     OutputHead,
-    EAST,
+    EASTModel,
 )
 
 
@@ -273,7 +273,7 @@ def test_output_head_different_sizes():
 
 def test_east_initialization_default():
     """Тест инициализации EAST с параметрами по умолчанию"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     assert isinstance(model.backbone, ResNetFeatureExtractor)
     assert isinstance(model.decoder, FeatureMergingBranchResNet)
@@ -284,7 +284,7 @@ def test_east_initialization_default():
 
 def test_east_initialization_resnet101():
     """Тест инициализации EAST с ResNet101"""
-    model = EAST(backbone_name="resnet101", pretrained_backbone=False)
+    model = EASTModel(backbone_name="resnet101", pretrained_backbone=False)
     
     x = torch.randn(1, 3, 256, 256)
     output = model(x)
@@ -295,7 +295,7 @@ def test_east_initialization_resnet101():
 
 def test_east_initialization_freeze_first():
     """Тест инициализации EAST с заморозкой первых слоёв"""
-    model = EAST(
+    model = EASTModel(
         backbone_name="resnet50", pretrained_backbone=False, freeze_first=True
     )
     
@@ -308,7 +308,7 @@ def test_east_initialization_freeze_first():
 
 def test_east_forward():
     """Тест forward pass для EAST"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     x = torch.randn(2, 3, 512, 512)
     
     output = model(x)
@@ -323,7 +323,7 @@ def test_east_forward():
 
 def test_east_output_shapes():
     """Тест правильности размеров выходных тензоров"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     # Разные размеры входа
     input_sizes = [(256, 256), (512, 512), (640, 640)]
@@ -342,7 +342,7 @@ def test_east_output_shapes():
 
 def test_east_batch_processing():
     """Тест EAST с разными размерами batch"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     for batch_size in [1, 2, 4, 8]:
         x = torch.randn(batch_size, 3, 256, 256)
@@ -354,7 +354,7 @@ def test_east_batch_processing():
 
 def test_east_gradient_flow():
     """Тест что градиенты проходят через модель"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     x = torch.randn(1, 3, 256, 256, requires_grad=True)
     
     output = model(x)
@@ -368,7 +368,7 @@ def test_east_gradient_flow():
 
 def test_east_eval_mode():
     """Тест переключения EAST в eval режим"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     # Train mode
     model.train()
@@ -387,7 +387,7 @@ def test_east_eval_mode():
 
 def test_east_no_pretrained_backbone():
     """Тест EAST без pretrained backbone"""
-    model = EAST(backbone_name="resnet50", pretrained_backbone=False)
+    model = EASTModel(backbone_name="resnet50", pretrained_backbone=False)
     
     x = torch.randn(1, 3, 224, 224)
     output = model(x)
@@ -398,7 +398,7 @@ def test_east_no_pretrained_backbone():
 
 def test_east_pretrained_backbone():
     """Тест EAST с pretrained backbone"""
-    model = EAST(backbone_name="resnet50", pretrained_backbone=True)
+    model = EASTModel(backbone_name="resnet50", pretrained_backbone=True)
     
     x = torch.randn(1, 3, 224, 224)
     output = model(x)
@@ -412,18 +412,18 @@ def test_east_pretrained_model_path_nonexistent(tmp_path):
     fake_path = tmp_path / "nonexistent_model.pth"
     
     with pytest.raises(FileNotFoundError):
-        EAST(pretrained_backbone=False, pretrained_model_path=str(fake_path))
+        EASTModel(pretrained_backbone=False, pretrained_model_path=str(fake_path))
 
 
 def test_east_pretrained_model_path_valid(tmp_path):
     """Тест загрузки существующей модели"""
     # Создаём модель и сохраняем её
-    model1 = EAST(pretrained_backbone=False)
+    model1 = EASTModel(pretrained_backbone=False)
     model_path = tmp_path / "test_model.pth"
     torch.save(model1.state_dict(), model_path)
     
     # Загружаем в новую модель
-    model2 = EAST(pretrained_backbone=False, pretrained_model_path=str(model_path))
+    model2 = EASTModel(pretrained_backbone=False, pretrained_model_path=str(model_path))
     
     # Проверяем что модель работает
     x = torch.randn(1, 3, 256, 256)
@@ -435,7 +435,7 @@ def test_east_pretrained_model_path_valid(tmp_path):
 
 def test_east_parameters_count():
     """Тест что у модели есть обучаемые параметры"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -446,8 +446,8 @@ def test_east_parameters_count():
 
 def test_east_different_backbones_compatibility():
     """Тест что разные backbones дают совместимые выходы"""
-    model50 = EAST(backbone_name="resnet50", pretrained_backbone=False)
-    model101 = EAST(backbone_name="resnet101", pretrained_backbone=False)
+    model50 = EASTModel(backbone_name="resnet50", pretrained_backbone=False)
+    model101 = EASTModel(backbone_name="resnet101", pretrained_backbone=False)
     
     x = torch.randn(1, 3, 256, 256)
     
@@ -492,7 +492,7 @@ def test_feature_merging_small_features():
 
 def test_east_minimum_input_size():
     """Тест EAST с минимальным разумным размером входа"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     # Минимальный размер для ResNet (должен быть кратен 32)
     x = torch.randn(1, 3, 128, 128)
@@ -504,7 +504,7 @@ def test_east_minimum_input_size():
 
 def test_east_non_square_input():
     """Тест EAST с прямоугольным входом"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     
     x = torch.randn(1, 3, 256, 512)  # height != width
     output = model(x)
@@ -515,7 +515,7 @@ def test_east_non_square_input():
 
 def test_east_cpu_device():
     """Тест что EAST работает на CPU"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     model = model.cpu()
     
     x = torch.randn(1, 3, 256, 256)
@@ -528,7 +528,7 @@ def test_east_cpu_device():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_east_cuda_device():
     """Тест что EAST работает на CUDA"""
-    model = EAST(pretrained_backbone=False)
+    model = EASTModel(pretrained_backbone=False)
     model = model.cuda()
     
     x = torch.randn(1, 3, 256, 256).cuda()
@@ -536,3 +536,4 @@ def test_east_cuda_device():
     
     assert output["score"].device.type == "cuda"
     assert output["geometry"].device.type == "cuda"
+

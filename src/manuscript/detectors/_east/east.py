@@ -111,7 +111,7 @@ class OutputHead(nn.Module):
         return score, geometry
 
 
-class EAST(nn.Module):
+class EASTModel(nn.Module):
     def __init__(
         self,
         backbone_name: str = "resnet50",

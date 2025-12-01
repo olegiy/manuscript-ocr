@@ -4,7 +4,9 @@ from typing import List, Tuple, Optional
 
 class Word(BaseModel):
     polygon: List[Tuple[float, float]] = Field(
-        ..., description="List of vertices (x, y) of the polygon defining the region"
+        ...,
+        min_items=4,
+        description="Polygon vertices (x, y), ordered clockwise. For quadrilateral text regions: TL → TR → BR → BL."
     )
     detection_confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Text detection confidence score from detector"
@@ -15,15 +17,20 @@ class Word(BaseModel):
     recognition_confidence: Optional[float] = Field(
         None, ge=0.0, le=1.0, description="Text recognition confidence score from recognizer"
     )
-
+    order: Optional[int] = Field(
+        None,
+        description="Reading-order position assigned after sorting. None before sorting; list order remains authoritative."
+    )
 
 class Block(BaseModel):
     """
     A text block, which may consist of several words (Word).
     """
-
     words: List[Word]
-
+    order: Optional[int] = Field(
+        None,
+        description="Block reading-order position after sorting. None before sorting."
+    )
 
 class Page(BaseModel):
     """

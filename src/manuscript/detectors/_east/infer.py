@@ -12,7 +12,7 @@ from torch.utils.data import ConcatDataset
 
 from .._types import Block, Page, Word
 from .dataset import EASTDataset
-from .east import EAST as EASTModel
+from .east import EASTModel
 from .lanms import locality_aware_nms
 from .train_utils import _run_training
 from .utils import (

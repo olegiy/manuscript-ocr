@@ -478,7 +478,7 @@ def _run_training(
     
     try:
         print("Attempting to export best model to ONNX...")
-        from manuscript.detectors._east.east import EAST
+        from manuscript.detectors._east.infer import EAST
         
         onnx_path = os.path.join(ckpt_dir, "best_model.onnx")
         best_weights_path = os.path.join(ckpt_dir, "best.pth")
