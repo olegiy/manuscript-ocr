@@ -1,3 +1,4 @@
+```mermaid
 graph LR
 
     %% Entities
@@ -23,3 +24,4 @@ graph LR
 
     %% Block fields
     Block --> BlockOrder["order: Optional[int]<br>assigned after sorting"]
+```
