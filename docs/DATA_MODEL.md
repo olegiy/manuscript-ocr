@@ -1,15 +1,22 @@
 ```mermaid
-mindmap
-  root((OCR Data Model))
-    Page
-      blocks[List of Block]
-    Block
-      words[List of Word]
-      order("Block reading-order position\nNone before sorting")
-    Word
-      polygon("Polygon vertices (x, y)\n≥ 4 points, clockwise order")
-      detection_confidence("Detection score 0.0–1.0")
-      text("Recognized text (optional)")
-      recognition_confidence("Recognition score 0.0–1.0")
-      order("Word reading-order position\nNone before sorting")
+graph TD
+
+    %% Entities
+    Page[Page]
+    Block[Block]
+    Word[Word]
+
+    %% Relations
+    Page -->|"blocks: List[Block]"| Block
+    Block -->|"words: List[Word]"| Word
+
+    %% Word fields
+    Word --> Wpoly["polygon: List[(x, y)]<br>≥ 4 points, clockwise"]
+    Word --> Wdet["detection_confidence: float (0–1)"]
+    Word --> Wtext["text: str?"]
+    Word --> Wrec["recognition_confidence: float (0–1)?"]
+    Word --> WordOrder["order: int?<br>assigned after sorting"]
+
+    %% Block fields
+    Block --> BlockOrder["order: int?<br>assigned after sorting"]
 ```
