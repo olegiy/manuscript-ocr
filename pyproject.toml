@@ -53,6 +53,10 @@ dev = [
     "torch>=1.13",
     "torchvision>=0.14",
     
+    # ONNX export tools
+    "onnx>=1.12",
+    "onnxsim>=0.4",
+    
     # Training utilities
     "torch-optimizer>=0.1",
     "python-Levenshtein>=0.12",

@@ -241,7 +241,9 @@ def _run_training(
     collage_samples = 4
 
     def make_collage(tag: str, epoch: int):
+        """Create validation collage with predictions from ONNX export."""
         vis_model = ema_model if use_ema else model
+        
         for ds_name, dataset in collage_sources:
             if len(dataset) == 0:
                 continue
@@ -251,11 +253,14 @@ def _run_training(
                 device,
                 num=collage_samples,
                 cell_size=collage_cell_size,
+                experiment_dir=experiment_dir,
+                epoch=epoch,
             )
+            # Use fixed tag name to avoid creating millions of cards
             writer.add_image(
-                f"Val/{tag}/{_sanitize_tag(ds_name)}",
+                f"Validation/{_sanitize_tag(ds_name)}",  # Fixed tag without epoch
                 coll,
-                epoch,
+                epoch,  # epoch as step
                 dataformats="HWC",
             )
 
@@ -348,6 +353,10 @@ def _run_training(
             
             current_step = global_step + batch_idx
             writer.add_scalar("Loss/Train_Step", loss.item(), current_step)
+            
+            # Log learning rate at each step
+            current_lr = scheduler.get_last_lr()[0]
+            writer.add_scalar("LearningRate/Step", current_lr, current_step)
 
             if use_ema:
                 with torch.no_grad():
@@ -356,6 +365,10 @@ def _run_training(
 
         avg_train = train_loss / len(train_loader)
         writer.add_scalar("Loss/Train", avg_train, epoch)
+        
+        # Log learning rate at each epoch
+        current_lr = scheduler.get_last_lr()[0]
+        writer.add_scalar("LearningRate/Epoch", current_lr, epoch)
         
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -450,7 +463,7 @@ def _run_training(
                     print(f"Early stopping at epoch {epoch}")
                     should_stop = True
 
-            make_collage(f"epoch{epoch}", epoch)
+            make_collage("Predictions", epoch)
             
             if device.type == "cuda":
                 torch.cuda.empty_cache()
@@ -478,7 +491,7 @@ def _run_training(
     
     try:
         print("Attempting to export best model to ONNX...")
-        from manuscript.detectors._east.infer import EAST
+        from manuscript.detectors import EAST
         
         onnx_path = os.path.join(ckpt_dir, "best_model.onnx")
         best_weights_path = os.path.join(ckpt_dir, "best.pth")
@@ -508,7 +521,16 @@ def _custom_collate_fn(batch):
     return images, {"score_map": score_maps, "geo_map": geo_maps, "quads": quads_list}
 
 
-def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
+def _collage_batch(
+    model, 
+    dataset, 
+    device, 
+    num: int = 4, 
+    cell_size: int = 640,
+    experiment_dir: str = None,
+    epoch: int = 0,
+):
+    """Create collage with model predictions for visualization."""
     coll_imgs = []
     for i in range(min(num, len(dataset))):
         img_t, tgt = dataset[i]
@@ -543,6 +565,7 @@ def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
             cell_size=cell_size,
         )
         coll_imgs.append(coll)
+    
     top = np.hstack(coll_imgs[:2])
     bot = np.hstack(coll_imgs[2:4]) if len(coll_imgs) > 2 else np.zeros_like(top)
     return np.vstack([top, bot])

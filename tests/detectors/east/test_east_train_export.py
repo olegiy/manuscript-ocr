@@ -17,6 +17,13 @@ except ImportError:
     TORCH_AVAILABLE = False
     torch = None  # type: ignore
 
+try:
+    import onnx
+    import onnxsim
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
+
 from manuscript.detectors._east import EAST
 
 
@@ -209,7 +216,7 @@ class TestEASTTrain:
             assert call_kwargs is not None
 
 
-@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
+@pytest.mark.skipif(not TORCH_AVAILABLE or not ONNX_AVAILABLE, reason="PyTorch and ONNX not installed")
 class TestEASTExport:
     """Tests for EAST.export() static method."""
 
