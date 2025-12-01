@@ -1,24 +1,30 @@
 import pytest
-import torch
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+
 from manuscript.detectors._east.loss import compute_dice_loss, EASTLoss
 
 
-# --- Тесты для compute_dice_loss ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for compute_dice_loss ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_perfect_match():
-    """Тест Dice loss при идеальном совпадении"""
+    """Test Dice loss for a perfect match"""
     gt = torch.ones(2, 1, 4, 4)
     pred = torch.ones(2, 1, 4, 4)
     
     loss = compute_dice_loss(gt, pred)
     
-    # При идеальном совпадении loss должен быть близок к 0
+    # For a perfect match, loss should be close to 0
     assert loss < 0.01
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_no_overlap():
-    """Тест Dice loss при отсутствии совпадения"""
+    """Test Dice loss for no overlap"""
     gt = torch.zeros(2, 1, 4, 4)
     gt[0, 0, 0, 0] = 1.0
     pred = torch.zeros(2, 1, 4, 4)
@@ -26,53 +32,52 @@ def test_compute_dice_loss_no_overlap():
     
     loss = compute_dice_loss(gt, pred)
     
-    # При отсутствии пересечения loss близок к 1
+    # For no overlap, loss should be close to 1
     assert loss > 0.5
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_partial_overlap():
-    """Тест Dice loss при частичном совпадении"""
+    """Test Dice loss for partial overlap"""
     gt = torch.zeros(1, 1, 4, 4)
-    gt[0, 0, :2, :2] = 1.0  # Левый верхний квадрант
+    gt[0, 0, :2, :2] = 1.0  # Top-left quadrant
     
     pred = torch.zeros(1, 1, 4, 4)
-    pred[0, 0, 1:3, 1:3] = 1.0  # Пересекается с gt
+    pred[0, 0, 1:3, 1:3] = 1.0  # Overlaps with gt
     
     loss = compute_dice_loss(gt, pred)
     
-    # Должно быть между 0 и 1
+    # Should be between 0 and 1
     assert 0 < loss < 1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_stability():
-    """Тест стабильности Dice loss (защита от деления на ноль)"""
+    """Test Dice loss stability (protection against division by zero)"""
     gt = torch.zeros(1, 1, 4, 4)
     pred = torch.zeros(1, 1, 4, 4)
     
     loss = compute_dice_loss(gt, pred)
     
-    # Должно работать без ошибок благодаря epsilon
+    # Should work without errors due to epsilon
     assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_different_scales():
-    """Тест Dice loss с разными значениями интенсивности"""
+    """Test Dice loss with different intensity values"""
     gt = torch.ones(1, 1, 4, 4) * 0.5
     pred = torch.ones(1, 1, 4, 4) * 0.5
     
     loss = compute_dice_loss(gt, pred)
     
-    # Dice loss зависит от абсолютных значений, не только от совпадения
+    # Dice loss depends on absolute values, not just overlap
     # inter = 0.5*0.5*16 = 4, union = 0.5*16 + 0.5*16 + eps = 16 + eps
     # loss = 1 - 2*4/(16+eps) = 1 - 0.5 = 0.5
     assert abs(loss - 0.5) < 0.01
 
 
-# --- Тесты для EASTLoss инициализации ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for EASTLoss initialization ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_initialization_default():
-    """Тест инициализации EASTLoss с параметрами по умолчанию"""
+    """Test EASTLoss initialization with default parameters"""
     loss_fn = EASTLoss()
     
     assert loss_fn.use_ohem == False
@@ -80,28 +85,27 @@ def test_east_loss_initialization_default():
     assert loss_fn.use_focal_geo == False
     assert loss_fn.focal_gamma == 2.0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_initialization_ohem():
-    """Тест инициализации EASTLoss с OHEM"""
+    """Test EASTLoss initialization with OHEM"""
     loss_fn = EASTLoss(use_ohem=True, ohem_ratio=0.3)
     
     assert loss_fn.use_ohem == True
     assert loss_fn.ohem_ratio == 0.3
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_initialization_focal():
-    """Тест инициализации EASTLoss с Focal loss"""
+    """Test EASTLoss initialization with Focal loss"""
     loss_fn = EASTLoss(use_focal_geo=True, focal_gamma=3.0)
     
     assert loss_fn.use_focal_geo == True
     assert loss_fn.focal_gamma == 3.0
 
 
-# --- Тесты для EASTLoss forward ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for EASTLoss forward ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_basic():
-    """Тест базового forward pass для EASTLoss"""
+    """Test basic forward pass for EASTLoss"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(2, 1, 8, 8)
@@ -115,25 +119,25 @@ def test_east_loss_forward_basic():
     assert loss.ndim == 0  # scalar
     assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_no_positives():
-    """Тест forward когда нет положительных пикселей"""
+    """Test forward when there are no positive pixels"""
     loss_fn = EASTLoss()
     
-    gt_score = torch.zeros(2, 1, 8, 8)  # Нет положительных
+    gt_score = torch.zeros(2, 1, 8, 8)  # No positives
     pred_score = torch.ones(2, 1, 8, 8)
     gt_geo = torch.ones(2, 8, 8, 8)
     pred_geo = torch.ones(2, 8, 8, 8)
     
     loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
     
-    # Должен вернуть 0 с requires_grad=True
+    # Should return 0 with requires_grad=True
     assert loss == 0.0
     assert loss.requires_grad
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_perfect_prediction():
-    """Тест forward при идеальном предсказании"""
+    """Test forward with perfect prediction"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(1, 1, 4, 4)
@@ -143,12 +147,12 @@ def test_east_loss_forward_perfect_prediction():
     
     loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
     
-    # При идеальном предсказании loss близок к 0
+    # With perfect prediction, loss should be close to 0
     assert loss < 0.1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_with_ohem():
-    """Тест forward с OHEM"""
+    """Test forward with OHEM"""
     loss_fn = EASTLoss(use_ohem=True, ohem_ratio=0.5)
     
     gt_score = torch.ones(2, 1, 8, 8)
@@ -161,9 +165,9 @@ def test_east_loss_forward_with_ohem():
     assert isinstance(loss, torch.Tensor)
     assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_with_focal():
-    """Тест forward с Focal geometry loss"""
+    """Test forward with Focal geometry loss"""
     loss_fn = EASTLoss(use_focal_geo=True, focal_gamma=2.0)
     
     gt_score = torch.ones(2, 1, 8, 8)
@@ -176,9 +180,9 @@ def test_east_loss_forward_with_focal():
     assert isinstance(loss, torch.Tensor)
     assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_forward_with_ohem_and_focal():
-    """Тест forward с OHEM и Focal одновременно"""
+    """Test forward with OHEM and Focal simultaneously"""
     loss_fn = EASTLoss(use_ohem=True, ohem_ratio=0.3, use_focal_geo=True, focal_gamma=3.0)
     
     gt_score = torch.ones(2, 1, 8, 8)
@@ -191,9 +195,9 @@ def test_east_loss_forward_with_ohem_and_focal():
     assert isinstance(loss, torch.Tensor)
     assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_gradient_flow():
-    """Тест что градиенты проходят через loss"""
+    """Test that gradients flow through the loss"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(1, 1, 4, 4)
@@ -204,19 +208,19 @@ def test_east_loss_gradient_flow():
     loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
     loss.backward()
     
-    # Проверяем что градиенты есть
+    # Check that gradients exist
     assert pred_score.grad is not None
     assert pred_geo.grad is not None
     assert pred_score.grad.abs().sum() > 0
     assert pred_geo.grad.abs().sum() > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_partial_gt_mask():
-    """Тест forward с частичной маской gt_score"""
+    """Test forward with partial gt_score mask"""
     loss_fn = EASTLoss()
     
     gt_score = torch.zeros(2, 1, 8, 8)
-    gt_score[:, :, :4, :4] = 1.0  # Только верхний левый квадрант
+    gt_score[:, :, :4, :4] = 1.0  # Only top-left quadrant
     pred_score = torch.rand(2, 1, 8, 8)
     gt_geo = torch.ones(2, 8, 8, 8)
     pred_geo = torch.rand(2, 8, 8, 8)
@@ -225,9 +229,9 @@ def test_east_loss_partial_gt_mask():
     
     assert loss > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_different_batch_sizes():
-    """Тест forward с разными размерами batch"""
+    """Test forward with different batch sizes"""
     loss_fn = EASTLoss()
     
     for batch_size in [1, 2, 4, 8]:
@@ -239,9 +243,9 @@ def test_east_loss_different_batch_sizes():
         loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
         assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_large_prediction_error():
-    """Тест forward с большой ошибкой предсказания"""
+    """Test forward with large prediction error"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(1, 1, 4, 4)
@@ -251,13 +255,13 @@ def test_east_loss_large_prediction_error():
     
     loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
     
-    # При большой ошибке loss должен быть значительным
+    # With large prediction error, loss should be significant
     assert loss > 1.0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_ohem_ratio_extreme_values():
-    """Тест OHEM с экстремальными значениями ratio"""
-    # Очень низкий ratio
+    """Test OHEM with extreme ratio values"""
+    # Very low ratio
     loss_fn_low = EASTLoss(use_ohem=True, ohem_ratio=0.01)
     
     gt_score = torch.ones(2, 1, 8, 8)
@@ -268,14 +272,14 @@ def test_east_loss_ohem_ratio_extreme_values():
     loss_low = loss_fn_low(gt_score, pred_score, gt_geo, pred_geo)
     assert torch.isfinite(loss_low)
     
-    # Высокий ratio
+    # Very high ratio
     loss_fn_high = EASTLoss(use_ohem=True, ohem_ratio=0.99)
     loss_high = loss_fn_high(gt_score, pred_score, gt_geo, pred_geo)
     assert torch.isfinite(loss_high)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_focal_gamma_variations():
-    """Тест Focal loss с разными значениями gamma"""
+    """Test Focal loss with different gamma values"""
     gt_score = torch.ones(1, 1, 8, 8)
     pred_score = torch.rand(1, 1, 8, 8)
     gt_geo = torch.ones(1, 8, 8, 8)
@@ -288,35 +292,35 @@ def test_east_loss_focal_gamma_variations():
         losses.append(loss.item())
         assert torch.isfinite(loss)
     
-    # Все loss должны быть валидными
+    # All losses should be valid
     assert all(l >= 0 for l in losses)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_geo_channels_independence():
-    """Тест что все 8 каналов geometry учитываются"""
+    """Test that all 8 geometry channels are considered"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(1, 1, 4, 4)
     pred_score = torch.ones(1, 1, 4, 4)
     gt_geo = torch.ones(1, 8, 4, 4)
     
-    # Предсказание с ошибкой только в одном канале
+    # Prediction with error in only one channel
     pred_geo_one_channel = torch.ones(1, 8, 4, 4)
-    pred_geo_one_channel[:, 0, :, :] = 0  # Ошибка в первом канале
+    pred_geo_one_channel[:, 0, :, :] = 0  # Error in the first channel
     
     loss_one = loss_fn(gt_score, pred_score, gt_geo, pred_geo_one_channel)
     
-    # Предсказание с ошибкой во всех каналах
+    # Prediction with error in all channels
     pred_geo_all_channels = torch.zeros(1, 8, 4, 4)
     
     loss_all = loss_fn(gt_score, pred_score, gt_geo, pred_geo_all_channels)
     
-    # Loss с ошибкой во всех каналах должен быть больше
+    # Loss with error in all channels should be greater
     assert loss_all > loss_one
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_device_cuda():
-    """Тест что loss работает на CUDA (если доступна)"""
+    """Test that loss works on CUDA (if available)"""
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
     
@@ -331,9 +335,9 @@ def test_east_loss_device_cuda():
     
     assert loss.device.type == "cuda"
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_device_cpu():
-    """Тест что loss работает на CPU"""
+    """Test that loss works on CPU"""
     loss_fn = EASTLoss()
     
     gt_score = torch.ones(1, 1, 4, 4)
@@ -345,12 +349,12 @@ def test_east_loss_device_cpu():
     
     assert loss.device.type == "cpu"
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_numerical_stability():
-    """Тест численной стабильности с экстремальными значениями"""
+    """Test numerical stability with extreme values"""
     loss_fn = EASTLoss()
     
-    # Очень большие значения
+    # Very large values
     gt_score = torch.ones(1, 1, 4, 4) * 1e6
     pred_score = torch.ones(1, 1, 4, 4) * 1e6
     gt_geo = torch.ones(1, 8, 4, 4) * 1e6
@@ -359,7 +363,7 @@ def test_east_loss_numerical_stability():
     loss = loss_fn(gt_score, pred_score, gt_geo, pred_geo)
     assert torch.isfinite(loss)
     
-    # Очень маленькие значения
+    # Very small values
     gt_score_small = torch.ones(1, 1, 4, 4) * 1e-6
     pred_score_small = torch.ones(1, 1, 4, 4) * 1e-6
     gt_geo_small = torch.ones(1, 8, 4, 4) * 1e-6
@@ -368,13 +372,13 @@ def test_east_loss_numerical_stability():
     loss_small = loss_fn(gt_score_small, pred_score_small, gt_geo_small, pred_geo_small)
     assert torch.isfinite(loss_small)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_single_positive_pixel():
-    """Тест с одним положительным пикселем"""
+    """Test with a single positive pixel"""
     loss_fn = EASTLoss()
     
     gt_score = torch.zeros(1, 1, 8, 8)
-    gt_score[0, 0, 4, 4] = 1.0  # Только один пиксель
+    gt_score[0, 0, 4, 4] = 1.0  # Only one pixel
     pred_score = torch.rand(1, 1, 8, 8)
     gt_geo = torch.ones(1, 8, 8, 8)
     pred_geo = torch.rand(1, 8, 8, 8)
@@ -384,9 +388,9 @@ def test_east_loss_single_positive_pixel():
     assert torch.isfinite(loss)
     assert loss >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_ohem_single_batch():
-    """Тест OHEM с batch_size=1"""
+    """Test OHEM with batch_size=1"""
     loss_fn = EASTLoss(use_ohem=True, ohem_ratio=0.5)
     
     gt_score = torch.ones(1, 1, 8, 8)
@@ -398,9 +402,9 @@ def test_east_loss_ohem_single_batch():
     
     assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_ohem_multi_batch():
-    """Тест OHEM с несколькими batch"""
+    """Test OHEM with multiple batches"""
     loss_fn = EASTLoss(use_ohem=True, ohem_ratio=0.5)
     
     gt_score = torch.ones(4, 1, 8, 8)
@@ -412,9 +416,9 @@ def test_east_loss_ohem_multi_batch():
     
     assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_compute_dice_loss_gradient():
-    """Тест что градиенты проходят через dice loss"""
+    """Test that gradients flow through dice loss"""
     gt = torch.ones(1, 1, 4, 4)
     pred = torch.rand(1, 1, 4, 4, requires_grad=True)
     
@@ -424,9 +428,9 @@ def test_compute_dice_loss_gradient():
     assert pred.grad is not None
     assert pred.grad.abs().sum() > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_comparison_ohem_vs_standard():
-    """Тест сравнения OHEM vs стандартного loss"""
+    """Test comparison of OHEM vs standard loss"""
     gt_score = torch.ones(2, 1, 8, 8)
     pred_score = torch.rand(2, 1, 8, 8)
     gt_geo = torch.ones(2, 8, 8, 8)
@@ -438,17 +442,17 @@ def test_east_loss_comparison_ohem_vs_standard():
     loss_std_val = loss_standard(gt_score, pred_score, gt_geo, pred_geo)
     loss_ohem_val = loss_ohem(gt_score, pred_score, gt_geo, pred_geo)
     
-    # Оба должны быть валидными
+    # Both should be valid
     assert torch.isfinite(loss_std_val)
     assert torch.isfinite(loss_ohem_val)
     
-    # Значения могут отличаться
+    # Values may differ
     assert loss_std_val >= 0
     assert loss_ohem_val >= 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_loss_different_spatial_sizes():
-    """Тест с разными пространственными размерами"""
+    """Test with different spatial sizes"""
     loss_fn = EASTLoss()
     
     sizes = [(4, 4), (8, 8), (16, 16), (32, 32)]

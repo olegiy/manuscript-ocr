@@ -1,15 +1,19 @@
 from manuscript.detectors import EAST
+from manuscript.utils import visualize_page, read_image
 
-# Model initialization
-model = EAST(device="cuda")
-    
-# Path to the image
-img_path = r"C:\Users\USER\Desktop\IMG_9056.JPG"
+# Детекция
+detector = EAST(weights="east_50_g1")
 
-# Inference with visualization
-result = model.predict(img_path, vis=True, sort_reading_order=True, profile=True)
-page = result["page"]
-img = result["vis_image"]
+result = detector(r"C:\Users\USER\Desktop\IMG_9056.JPG")
 
-# Show the result
-img.show()
+# Визуализация с разными цветами для строк
+img = read_image(r"C:\Users\USER\Desktop\IMG_9056.JPG")
+vis = visualize_page(
+    img, 
+    result["page"], 
+    show_order=True,  # Включить разные цвета для строк + номера
+)
+vis.show()
+
+# Или без масштабирования
+vis_full = visualize_page(img, result["page"], show_order=True, max_size=None)

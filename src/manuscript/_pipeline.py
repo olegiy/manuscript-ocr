@@ -10,7 +10,8 @@ from .recognizers import TRBA
 from .utils import (
     visualize_page,
     read_image,
-    sort_boxes_reading_order_with_resolutions,
+    sort_into_lines,
+    sort_boxes_reading_order_with_resolutions,  # deprecated, keeping for now
 )
 
 

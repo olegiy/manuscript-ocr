@@ -1,6 +1,14 @@
-import pytest
-import torch
-import torch.nn as nn
+﻿import pytest
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    nn = None
+
 from manuscript.detectors._east.east import (
     DecoderBlock,
     ResNetFeatureExtractor,
@@ -10,11 +18,10 @@ from manuscript.detectors._east.east import (
 )
 
 
-# --- Тесты для DecoderBlock ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for DecoderBlock ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_decoder_block_initialization():
-    """Тест инициализации DecoderBlock"""
+    """Test initialization of DecoderBlock"""
     block = DecoderBlock(in_channels=256, mid_channels=128, out_channels=64)
     
     assert isinstance(block.conv1x1, nn.Sequential)
@@ -22,9 +29,9 @@ def test_decoder_block_initialization():
     assert len(block.conv1x1) == 3  # Conv2d, BatchNorm2d, ReLU
     assert len(block.conv3x3) == 3
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_decoder_block_forward():
-    """Тест forward pass для DecoderBlock"""
+    """Test forward pass for DecoderBlock"""
     block = DecoderBlock(in_channels=256, mid_channels=128, out_channels=64)
     x = torch.randn(2, 256, 16, 16)
     
@@ -33,24 +40,24 @@ def test_decoder_block_forward():
     assert output.shape == (2, 64, 16, 16)
     assert output.dtype == torch.float32
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_decoder_block_different_sizes():
-    """Тест DecoderBlock с разными размерами входа"""
+    """Test DecoderBlock with different input sizes"""
     block = DecoderBlock(in_channels=512, mid_channels=256, out_channels=128)
     
-    # Маленький вход
+    # Small input
     x_small = torch.randn(1, 512, 4, 4)
     out_small = block(x_small)
     assert out_small.shape == (1, 128, 4, 4)
     
-    # Большой вход
+    # Large input
     x_large = torch.randn(1, 512, 32, 32)
     out_large = block(x_large)
     assert out_large.shape == (1, 128, 32, 32)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_decoder_block_batch_processing():
-    """Тест DecoderBlock с разными размерами batch"""
+    """Test DecoderBlock with different batch sizes"""
     block = DecoderBlock(in_channels=128, mid_channels=64, out_channels=32)
     
     for batch_size in [1, 4, 8]:
@@ -59,16 +66,15 @@ def test_decoder_block_batch_processing():
         assert output.shape == (batch_size, 32, 8, 8)
 
 
-# --- Тесты для ResNetFeatureExtractor ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for ResNetFeatureExtractor ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_resnet50():
-    """Тест ResNetFeatureExtractor с ResNet50"""
+    """Test ResNetFeatureExtractor with ResNet50"""
     extractor = ResNetFeatureExtractor(backbone_name="resnet50", pretrained=False)
     
     assert hasattr(extractor, "extractor")
     
-    # Тест forward
+    # Test forward
     x = torch.randn(1, 3, 224, 224)
     features = extractor(x)
     
@@ -77,9 +83,9 @@ def test_resnet_feature_extractor_resnet50():
     assert "res3" in features
     assert "res4" in features
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_resnet101():
-    """Тест ResNetFeatureExtractor с ResNet101"""
+    """Test ResNetFeatureExtractor with ResNet101"""
     extractor = ResNetFeatureExtractor(backbone_name="resnet101", pretrained=False)
     
     x = torch.randn(1, 3, 224, 224)
@@ -90,15 +96,15 @@ def test_resnet_feature_extractor_resnet101():
     assert "res3" in features
     assert "res4" in features
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_invalid_backbone():
-    """Тест ResNetFeatureExtractor с недопустимым backbone"""
+    """Test ResNetFeatureExtractor with invalid backbone"""
     with pytest.raises(ValueError, match="Unsupported backbone"):
         ResNetFeatureExtractor(backbone_name="vgg16", pretrained=False)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_feature_shapes():
-    """Тест правильности размеров feature maps"""
+    """Test correct sizes of feature maps"""
     extractor = ResNetFeatureExtractor(backbone_name="resnet50", pretrained=False)
     x = torch.randn(2, 3, 256, 256)
     
@@ -110,14 +116,14 @@ def test_resnet_feature_extractor_feature_shapes():
     assert features["res3"].shape[1] == 1024  # layer3
     assert features["res4"].shape[1] == 2048  # layer4
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_freeze_first():
-    """Тест замораживания первых слоев"""
+    """Test freezing first layers"""
     extractor = ResNetFeatureExtractor(
         backbone_name="resnet50", pretrained=False, freeze_first=True
     )
     
-    # Проверяем что первые слои заморожены
+    # Check that the first layers are frozen
     frozen_params = []
     trainable_params = []
     
@@ -127,27 +133,27 @@ def test_resnet_feature_extractor_freeze_first():
         else:
             frozen_params.append(name)
     
-    # Должны быть замороженные параметры
+    # Should have frozen parameters
     assert len(frozen_params) > 0
     
-    # Проверяем что conv1, bn1, layer1 заморожены
+    # Check that conv1, bn1, layer1 are frozen
     for name in frozen_params:
         assert any(prefix in name for prefix in ["conv1", "bn1", "layer1"])
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_resnet_feature_extractor_pretrained():
-    """Тест загрузки pretrained весов"""
-    # Без pretrained
+    """Test loading pretrained weights"""
+    # Without pretrained
     extractor_no_pretrain = ResNetFeatureExtractor(
         backbone_name="resnet50", pretrained=False
     )
     
-    # С pretrained
+    # With pretrained
     extractor_pretrained = ResNetFeatureExtractor(
         backbone_name="resnet50", pretrained=True
     )
     
-    # Оба должны работать
+    # Both should work
     x = torch.randn(1, 3, 224, 224)
     out1 = extractor_no_pretrain(x)
     out2 = extractor_pretrained(x)
@@ -155,11 +161,10 @@ def test_resnet_feature_extractor_pretrained():
     assert out1["res1"].shape == out2["res1"].shape
 
 
-# --- Тесты для FeatureMergingBranchResNet ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for FeatureMergingBranchResNet ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_feature_merging_branch_initialization():
-    """Тест инициализации FeatureMergingBranchResNet"""
+    """Test initialization of FeatureMergingBranchResNet"""
     merger = FeatureMergingBranchResNet()
     
     assert isinstance(merger.block1, DecoderBlock)
@@ -167,12 +172,12 @@ def test_feature_merging_branch_initialization():
     assert isinstance(merger.block3, DecoderBlock)
     assert isinstance(merger.block4, DecoderBlock)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_feature_merging_branch_forward():
-    """Тест forward pass для FeatureMergingBranchResNet"""
+    """Test forward pass for FeatureMergingBranchResNet"""
     merger = FeatureMergingBranchResNet()
     
-    # Создаём фейковые feature maps
+    # Create fake feature maps
     feats = {
         "res1": torch.randn(2, 256, 64, 64),   # stride 4
         "res2": torch.randn(2, 512, 32, 32),   # stride 8
@@ -182,15 +187,15 @@ def test_feature_merging_branch_forward():
     
     output = merger(feats)
     
-    # Выход должен быть того же размера что res1 (stride 4)
+    # Output should be the same size as res1 (stride 4)
     assert output.shape == (2, 32, 64, 64)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_feature_merging_branch_upsampling():
-    """Тест что upsampling работает корректно"""
+    """Test that upsampling works correctly"""
     merger = FeatureMergingBranchResNet()
     
-    # Разные размеры входа
+    # Different input sizes
     feats = {
         "res1": torch.randn(1, 256, 128, 128),
         "res2": torch.randn(1, 512, 64, 64),
@@ -200,12 +205,12 @@ def test_feature_merging_branch_upsampling():
     
     output = merger(feats)
     
-    # Выход должен соответствовать res1
+    # Output should match res1
     assert output.shape == (1, 32, 128, 128)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_feature_merging_branch_batch_sizes():
-    """Тест FeatureMergingBranchResNet с разными batch sizes"""
+    """Test FeatureMergingBranchResNet with different batch sizes"""
     merger = FeatureMergingBranchResNet()
     
     for batch_size in [1, 2, 4]:
@@ -220,11 +225,10 @@ def test_feature_merging_branch_batch_sizes():
         assert output.shape == (batch_size, 32, 32, 32)
 
 
-# --- Тесты для OutputHead ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for OutputHead ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_output_head_initialization():
-    """Тест инициализации OutputHead"""
+    """Test initialization of OutputHead"""
     head = OutputHead()
     
     assert isinstance(head.score_map, nn.Conv2d)
@@ -232,9 +236,9 @@ def test_output_head_initialization():
     assert head.score_map.out_channels == 1
     assert head.geo_map.out_channels == 8
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_output_head_forward():
-    """Тест forward pass для OutputHead"""
+    """Test forward pass for OutputHead"""
     head = OutputHead()
     x = torch.randn(2, 32, 64, 64)
     
@@ -243,9 +247,9 @@ def test_output_head_forward():
     assert score.shape == (2, 1, 64, 64)
     assert geometry.shape == (2, 8, 64, 64)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_output_head_score_range():
-    """Тест что score в диапазоне [0, 1] из-за sigmoid"""
+    """Test that score in range [0, 1] due to sigmoid"""
     head = OutputHead()
     x = torch.randn(4, 32, 16, 16)
     
@@ -254,9 +258,9 @@ def test_output_head_score_range():
     assert score.min() >= 0
     assert score.max() <= 1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_output_head_different_sizes():
-    """Тест OutputHead с разными размерами входа"""
+    """Test OutputHead with different input sizes"""
     head = OutputHead()
     
     sizes = [(8, 8), (16, 16), (32, 32), (64, 64)]
@@ -268,11 +272,11 @@ def test_output_head_different_sizes():
         assert geometry.shape == (1, 8, h, w)
 
 
-# --- Тесты для полной модели EAST ---
+# --- Tests for полной model EAST ---
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_initialization_default():
-    """Тест инициализации EAST с параметрами по умолчанию"""
+    """Test initialization of EAST with default parameters"""
     model = EASTModel(pretrained_backbone=False)
     
     assert isinstance(model.backbone, ResNetFeatureExtractor)
@@ -281,9 +285,9 @@ def test_east_initialization_default():
     assert model.score_scale == 0.25
     assert model.geo_scale == 0.25
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_initialization_resnet101():
-    """Тест инициализации EAST с ResNet101"""
+    """Test initialization of EAST with ResNet101"""
     model = EASTModel(backbone_name="resnet101", pretrained_backbone=False)
     
     x = torch.randn(1, 3, 256, 256)
@@ -292,22 +296,22 @@ def test_east_initialization_resnet101():
     assert "score" in output
     assert "geometry" in output
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_initialization_freeze_first():
-    """Тест инициализации EAST с заморозкой первых слоёв"""
+    """Test initialization of EAST with freezing first layers"""
     model = EASTModel(
         backbone_name="resnet50", pretrained_backbone=False, freeze_first=True
     )
     
-    # Проверяем что есть замороженные параметры
+    # Check that there are frozen parameters
     frozen_count = sum(
         1 for param in model.backbone.parameters() if not param.requires_grad
     )
     assert frozen_count > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_forward():
-    """Тест forward pass для EAST"""
+    """Test forward pass for EAST"""
     model = EASTModel(pretrained_backbone=False)
     x = torch.randn(2, 3, 512, 512)
     
@@ -320,28 +324,28 @@ def test_east_forward():
     assert output["score"].shape[1] == 1  # score channel
     assert output["geometry"].shape[1] == 8  # geometry channels
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_output_shapes():
-    """Тест правильности размеров выходных тензоров"""
+    """Test correct sizes of output tensors"""
     model = EASTModel(pretrained_backbone=False)
     
-    # Разные размеры входа
+    # Different input sizes
     input_sizes = [(256, 256), (512, 512), (640, 640)]
     
     for h, w in input_sizes:
         x = torch.randn(1, 3, h, w)
         output = model(x)
         
-        # Выход в 4 раза меньше из-за stride
+        # Output is 4 times smaller due to stride
         expected_h = h // 4
         expected_w = w // 4
         
         assert output["score"].shape == (1, 1, expected_h, expected_w)
         assert output["geometry"].shape == (1, 8, expected_h, expected_w)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_batch_processing():
-    """Тест EAST с разными размерами batch"""
+    """Test EAST with different batch sizes"""
     model = EASTModel(pretrained_backbone=False)
     
     for batch_size in [1, 2, 4, 8]:
@@ -351,9 +355,9 @@ def test_east_batch_processing():
         assert output["score"].shape[0] == batch_size
         assert output["geometry"].shape[0] == batch_size
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_gradient_flow():
-    """Тест что градиенты проходят через модель"""
+    """Test that gradients flow through model"""
     model = EASTModel(pretrained_backbone=False)
     x = torch.randn(1, 3, 256, 256, requires_grad=True)
     
@@ -361,13 +365,13 @@ def test_east_gradient_flow():
     loss = output["score"].sum() + output["geometry"].sum()
     loss.backward()
     
-    # Проверяем что градиенты есть
+    # Check that градиенты есть
     assert x.grad is not None
     assert x.grad.abs().sum() > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_eval_mode():
-    """Тест переключения EAST в eval режим"""
+    """Test switching EAST to eval mode"""
     model = EASTModel(pretrained_backbone=False)
     
     # Train mode
@@ -380,13 +384,13 @@ def test_east_eval_mode():
     with torch.no_grad():
         out_eval = model(x)
     
-    # Выходы должны иметь одинаковую форму
+    # Outputs should have same shape
     assert out_train["score"].shape == out_eval["score"].shape
     assert out_train["geometry"].shape == out_eval["geometry"].shape
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_no_pretrained_backbone():
-    """Тест EAST без pretrained backbone"""
+    """Test EAST without pretrained backbone"""
     model = EASTModel(backbone_name="resnet50", pretrained_backbone=False)
     
     x = torch.randn(1, 3, 224, 224)
@@ -395,9 +399,9 @@ def test_east_no_pretrained_backbone():
     assert output["score"].shape[1] == 1
     assert output["geometry"].shape[1] == 8
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_pretrained_backbone():
-    """Тест EAST с pretrained backbone"""
+    """Test EAST with pretrained backbone"""
     model = EASTModel(backbone_name="resnet50", pretrained_backbone=True)
     
     x = torch.randn(1, 3, 224, 224)
@@ -406,35 +410,35 @@ def test_east_pretrained_backbone():
     assert output["score"].shape[1] == 1
     assert output["geometry"].shape[1] == 8
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_pretrained_model_path_nonexistent(tmp_path):
-    """Тест загрузки несуществующей модели"""
+    """Test loading non-existent model"""
     fake_path = tmp_path / "nonexistent_model.pth"
     
     with pytest.raises(FileNotFoundError):
         EASTModel(pretrained_backbone=False, pretrained_model_path=str(fake_path))
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_pretrained_model_path_valid(tmp_path):
-    """Тест загрузки существующей модели"""
-    # Создаём модель и сохраняем её
+    """Test loading existing model"""
+    # Create model and save it
     model1 = EASTModel(pretrained_backbone=False)
     model_path = tmp_path / "test_model.pth"
     torch.save(model1.state_dict(), model_path)
     
-    # Загружаем в новую модель
+    # Load into new model
     model2 = EASTModel(pretrained_backbone=False, pretrained_model_path=str(model_path))
     
-    # Проверяем что модель работает
+    # Check that the model works
     x = torch.randn(1, 3, 256, 256)
     output = model2(x)
     
     assert "score" in output
     assert "geometry" in output
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_parameters_count():
-    """Тест что у модели есть обучаемые параметры"""
+    """Test that the model has trainable parameters"""
     model = EASTModel(pretrained_backbone=False)
     
     total_params = sum(p.numel() for p in model.parameters())
@@ -443,9 +447,9 @@ def test_east_parameters_count():
     assert total_params > 0
     assert trainable_params > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_different_backbones_compatibility():
-    """Тест что разные backbones дают совместимые выходы"""
+    """Test that different backbones give compatible outputs"""
     model50 = EASTModel(backbone_name="resnet50", pretrained_backbone=False)
     model101 = EASTModel(backbone_name="resnet101", pretrained_backbone=False)
     
@@ -454,29 +458,28 @@ def test_east_different_backbones_compatibility():
     out50 = model50(x)
     out101 = model101(x)
     
-    # Выходы должны иметь одинаковую форму
+    # Outputs should have same shape
     assert out50["score"].shape == out101["score"].shape
     assert out50["geometry"].shape == out101["geometry"].shape
 
 
-# --- Граничные случаи ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Edge cases ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_decoder_block_single_pixel():
-    """Тест DecoderBlock с минимальным входом 1x1"""
+    """Test DecoderBlock with minimum input 1x1"""
     block = DecoderBlock(in_channels=256, mid_channels=128, out_channels=64)
-    block.eval()  # BatchNorm не работает с 1x1 в train mode
+    block.eval()  # BatchNorm does not work with 1x1 in train mode
     x = torch.randn(1, 256, 1, 1)
     
     with torch.no_grad():
         output = block(x)
     assert output.shape == (1, 64, 1, 1)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_feature_merging_small_features():
-    """Тест FeatureMergingBranchResNet с маленькими feature maps"""
+    """Test FeatureMergingBranchResNet with small feature maps"""
     merger = FeatureMergingBranchResNet()
-    merger.eval()  # BatchNorm не работает с 1x1 в train mode
+    merger.eval()  # BatchNorm does not work with 1x1 in train mode
     
     feats = {
         "res1": torch.randn(1, 256, 8, 8),
@@ -489,21 +492,21 @@ def test_feature_merging_small_features():
         output = merger(feats)
     assert output.shape == (1, 32, 8, 8)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_minimum_input_size():
-    """Тест EAST с минимальным разумным размером входа"""
+    """Test EAST with minimum reasonable size input"""
     model = EASTModel(pretrained_backbone=False)
     
-    # Минимальный размер для ResNet (должен быть кратен 32)
+    # Minimum size for ResNet (should be multiple of 32)
     x = torch.randn(1, 3, 128, 128)
     output = model(x)
     
     assert output["score"].shape == (1, 1, 32, 32)
     assert output["geometry"].shape == (1, 8, 32, 32)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_non_square_input():
-    """Тест EAST с прямоугольным входом"""
+    """Test EAST with rectangular input"""
     model = EASTModel(pretrained_backbone=False)
     
     x = torch.randn(1, 3, 256, 512)  # height != width
@@ -512,9 +515,9 @@ def test_east_non_square_input():
     assert output["score"].shape == (1, 1, 64, 128)
     assert output["geometry"].shape == (1, 8, 64, 128)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_east_cpu_device():
-    """Тест что EAST работает на CPU"""
+    """Test that EAST works on CPU"""
     model = EASTModel(pretrained_backbone=False)
     model = model.cpu()
     
@@ -527,7 +530,7 @@ def test_east_cpu_device():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_east_cuda_device():
-    """Тест что EAST работает на CUDA"""
+    """Test that EAST works on CUDA"""
     model = EASTModel(pretrained_backbone=False)
     model = model.cuda()
     

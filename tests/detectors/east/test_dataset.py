@@ -1,13 +1,15 @@
-"""
-Тесты для EASTDataset и геометрических функций
-"""
-
 import pytest
 import json
 import numpy as np
 import cv2
-import torch
 from pathlib import Path
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
 
 from manuscript.detectors._east.dataset import (
     order_vertices_clockwise,
@@ -17,81 +19,79 @@ from manuscript.detectors._east.dataset import (
 
 
 # ============================================================================
-# Тесты геометрических функций
+# Tests for geometric functions
 # ============================================================================
-
-@pytest.mark.skip(reason="Временно отключено")
 class TestGeometricFunctions:
-    """Тесты для вспомогательных геометрических функций"""
+    """Tests for helper geometric functions"""
 
     def test_order_vertices_clockwise_square(self):
-        """Тест упорядочивания вершин квадрата по часовой стрелке"""
-        # Неупорядоченные точки квадрата
+        """Test ordering square vertices clockwise"""
+        # Unordered square points
         poly = [[100, 100], [100, 0], [0, 0], [0, 100]]
         ordered = order_vertices_clockwise(poly)
 
-        # Проверяем формат
+        # Check the format
         assert ordered.shape == (4, 2)
         assert ordered.dtype == np.float32
 
-        # Проверяем порядок: TL, TR, BR, BL
-        # top-left должен быть левее top-right
+        # Check order: TL, TR, BR, BL
+        # top-left should be to the left of top-right
         assert ordered[0][0] < ordered[1][0]
-        # bottom-right должен быть ниже top-right
+        # bottom-right should be below top-right
         assert ordered[2][1] > ordered[1][1]
-        # bottom-left должен быть левее bottom-right
+        # bottom-left should be to the left of bottom-right
         assert ordered[3][0] < ordered[2][0]
 
     def test_order_vertices_clockwise_rectangle(self):
-        """Тест упорядочивания вершин прямоугольника"""
-        # Прямоугольник 200x100
+        """Test ordering rectangle vertices clockwise"""
+        # Rectangle 200x100
         poly = [[0, 0], [200, 0], [200, 100], [0, 100]]
         ordered = order_vertices_clockwise(poly)
 
-        # Проверяем что top-left в начале
+        # Check that top-left is first
         assert np.allclose(ordered[0], [0, 0])
-        # И bottom-right в правильной позиции
+        # And bottom-right is in the correct position
         assert np.allclose(ordered[2], [200, 100])
 
     def test_order_vertices_clockwise_rotated(self):
-        """Тест упорядочивания повернутого квадрата"""
-        # Квадрат повернутый на 45 градусов
+        """Test ordering rotated square vertices"""
+        # Square rotated by 45 degrees
         poly = [[50, 0], [100, 50], [50, 100], [0, 50]]
         ordered = order_vertices_clockwise(poly)
 
         assert ordered.shape == (4, 2)
-        # Проверяем что вершины упорядочены
+        # Ensure vertices are ordered
         assert len(ordered) == 4
 
     def test_shrink_poly_basic(self):
-        """Тест базового сжатия полигона"""
-        # Квадрат 100x100
+        """Test basic polygon shrinking"""
+        # Square 100x100
         quad = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
 
         shrunk = shrink_poly(quad, shrink_ratio=0.3)
 
-        # Проверяем формат
+        # Check format
         assert shrunk.shape == (4, 2)
         assert shrunk.dtype == np.float32
 
-        # Сжатый квадрат должен быть меньше оригинала
-        # top-left сдвинут вправо и вниз
+        # Shrunk square should be smaller than original
+        # top-left moved right and down
         assert shrunk[0][0] > quad[0][0]
         assert shrunk[0][1] > quad[0][1]
 
-        # bottom-right сдвинут влево и вверх
+        # bottom-right moved left and up
         assert shrunk[2][0] < quad[2][0]
         assert shrunk[2][1] < quad[2][1]
 
     def test_shrink_poly_different_ratios(self):
-        """Тест сжатия с разными коэффициентами"""
+        """Test shrinking with different ratios"""
         quad = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
 
         shrunk_small = shrink_poly(quad, shrink_ratio=0.1)
         shrunk_large = shrink_poly(quad, shrink_ratio=0.5)
 
-        # Больший коэффициент = больше сжатие
-        # Расстояние от top-left до центра должно быть больше при большем shrink_ratio
+        # Larger ratio = more shrinkage
+        # Distance from top-left to center should be smaller when shrink_ratio is larger
         center = np.array([50, 50])
         dist_small = np.linalg.norm(shrunk_small[0] - center)
         dist_large = np.linalg.norm(shrunk_large[0] - center)
@@ -99,35 +99,34 @@ class TestGeometricFunctions:
         assert dist_large < dist_small
 
     def test_shrink_poly_invalid_vertices(self):
-        """Тест ошибки при неправильном количестве вершин"""
-        # Треугольник (3 вершины)
+        """Test error with incorrect number of vertices"""
+        # Triangle (3 vertices)
         triangle = np.array([[0, 0], [100, 0], [50, 100]], dtype=np.float32)
 
         with pytest.raises(ValueError, match="Expected quadrilateral with 4 vertices"):
             shrink_poly(triangle)
 
     def test_shrink_poly_clockwise_order(self):
-        """Тест что сжатие работает с неупорядоченными вершинами"""
-        # Вершины в случайном порядке
+        """Test shrink works with unordered vertices"""
+        # Vertices in random order
         quad = np.array([[100, 0], [100, 100], [0, 100], [0, 0]], dtype=np.float32)
 
         shrunk = shrink_poly(quad, shrink_ratio=0.2)
 
-        # Не должно быть ошибок
+        # Should not raise any errors
         assert shrunk.shape == (4, 2)
 
 
 # ============================================================================
-# Тесты для EASTDataset
+# Tests for EASTDataset
 # ============================================================================
-
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 class TestEASTDataset:
-    """Тесты для класса EASTDataset"""
+    """Tests for EASTDataset class"""
 
     @pytest.fixture
     def simple_dataset(self, tmp_path):
-        """Создает простой датасет с одним изображением"""
+        """Creates a simple dataset with one image"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}
@@ -150,9 +149,9 @@ class TestEASTDataset:
         cv2.imwrite(str(img_dir / "test.jpg"), img)
 
         return str(img_dir), str(ann_file)
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_initialization(self, simple_dataset):
-        """Тест базовой инициализации датасета"""
+        """Test basic dataset initialization"""
         img_dir, ann_file = simple_dataset
 
         dataset = EASTDataset(
@@ -166,41 +165,41 @@ class TestEASTDataset:
         assert dataset.target_size == 512
         assert dataset.score_geo_scale == 0.25
         assert dataset.images_folder == img_dir
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_len(self, simple_dataset):
-        """Тест метода __len__"""
+        """Test __len__ method"""
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file)
 
         assert len(dataset) == 1
         assert dataset.__len__() == 1
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_getitem(self, simple_dataset):
-        """Тест получения элемента из датасета"""
+        """Test getting an item from the dataset"""
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
         img_tensor, target = dataset[0]
 
-        # Проверяем изображение
+        # Check image tensor
         assert isinstance(img_tensor, torch.Tensor)
         assert img_tensor.shape == (3, 512, 512)  # C, H, W
 
-        # Проверяем target
+        # Check target dictionary
         assert isinstance(target, dict)
         assert "score_map" in target
         assert "geo_map" in target
-        assert "rboxes" in target
+        assert "quads" in target
 
-        # Проверяем размеры карт
+        # Check map dimensions
         assert target["score_map"].shape[1:] == (128, 128)  # 512 * 0.25
         assert target["geo_map"].shape == (8, 128, 128)
 
-        # Проверяем rboxes
-        assert target["rboxes"].shape[1] == 5  # (cx, cy, w, h, angle)
-    @pytest.mark.skip(reason="Временно отключено")
+        # Check quads format (N, 8) where 8 = 4 points * 2 coordinates
+        assert target["quads"].shape[1] == 8
+
     def test_east_dataset_different_target_size(self, simple_dataset):
-        """Тест с разными размерами изображения"""
+        """Test with different image sizes"""
         img_dir, ann_file = simple_dataset
 
         dataset_512 = EASTDataset(img_dir, ann_file, target_size=512)
@@ -211,9 +210,9 @@ class TestEASTDataset:
 
         assert img_512.shape == (3, 512, 512)
         assert img_1024.shape == (3, 1024, 1024)
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_filter_invalid(self, tmp_path):
-        """Тест фильтрации невалидных аннотаций"""
+        """Test filtering of invalid annotations"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "valid.jpg", "width": 640, "height": 480},
@@ -221,15 +220,15 @@ class TestEASTDataset:
                 {"id": 3, "file_name": "no_ann.jpg", "width": 640, "height": 480},
             ],
             "annotations": [
-                # Валидная аннотация (4 точки)
+                # Valid annotation (4 points)
                 {
                     "id": 1,
                     "image_id": 1,
                     "segmentation": [[10, 10, 100, 10, 100, 50, 10, 50]],
                 },
-                # Невалидная (меньше 4 точек)
+                # Invalid (less than 4 points)
                 {"id": 2, "image_id": 2, "segmentation": [[10, 10, 100, 10]]},
-                # id 3 вообще без аннотаций
+                # id 3 has no annotations
             ],
         }
 
@@ -244,15 +243,15 @@ class TestEASTDataset:
             cv2.imwrite(str(img_dir / fname), img)
 
         with pytest.warns(
-            UserWarning, match="найдено.*изображений без годных квадов"
+            UserWarning, match="found.*images without valid quads"
         ):
             dataset = EASTDataset(str(img_dir), str(ann_file))
 
-        # Должен остаться только 1 валидный
+        # Only 1 valid image should remain
         assert len(dataset) == 1
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_missing_image(self, tmp_path):
-        """Тест ошибки при отсутствующем изображении"""
+        """Test error when image file is missing"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "missing.jpg", "width": 640, "height": 480}
@@ -271,15 +270,15 @@ class TestEASTDataset:
 
         img_dir = tmp_path / "images"
         img_dir.mkdir()
-        # НЕ создаем изображение
+        # Do NOT create the image
 
         dataset = EASTDataset(str(img_dir), str(ann_file))
 
         with pytest.raises(FileNotFoundError, match="Image not found"):
             _ = dataset[0]
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_multiple_quads(self, tmp_path):
-        """Тест с несколькими квадратами на одном изображении"""
+        """Test with multiple quads on a single image"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "multi.jpg", "width": 640, "height": 480}
@@ -314,11 +313,11 @@ class TestEASTDataset:
         dataset = EASTDataset(str(img_dir), str(ann_file))
         _, target = dataset[0]
 
-        # Должно быть 3 rbox
-        assert target["rboxes"].shape[0] == 3
-    @pytest.mark.skip(reason="Временно отключено")
+        # Should have 3 quads
+        assert target["quads"].shape[0] == 3
+
     def test_east_dataset_empty_annotations(self, tmp_path):
-        """Тест с изображением без аннотаций"""
+        """Test with image without annotations"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "empty.jpg", "width": 640, "height": 480}
@@ -337,16 +336,16 @@ class TestEASTDataset:
         with pytest.warns(UserWarning):
             dataset = EASTDataset(str(img_dir), str(ann_file))
 
-        # Должен быть пустым
+        # Should be empty
         assert len(dataset) == 0
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_custom_transform(self, simple_dataset):
-        """Тест кастомного transform"""
+        """Test custom transform"""
         import torchvision.transforms as transforms
 
         img_dir, ann_file = simple_dataset
 
-        # Кастомный transform без нормализации
+        # Custom transform without normalization
         custom_transform = transforms.Compose(
             [
                 transforms.ToPILImage(),
@@ -358,44 +357,44 @@ class TestEASTDataset:
 
         img_tensor, _ = dataset[0]
         assert img_tensor.shape == (3, 512, 512)
-        # Без нормализации значения должны быть в [0, 1]
+        # Without normalization values should be in [0, 1]
         assert img_tensor.min() >= 0
         assert img_tensor.max() <= 1
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_dataset_name(self, simple_dataset):
-        """Тест атрибута dataset_name"""
+        """Test dataset_name attribute"""
         img_dir, ann_file = simple_dataset
 
-        # Автоматическое имя из папки
+        # Automatic name from folder
         dataset = EASTDataset(img_dir, ann_file)
         assert dataset.dataset_name == Path(img_dir).stem
 
-        # Кастомное имя
+        # Custom name
         dataset_custom = EASTDataset(img_dir, ann_file, dataset_name="my_dataset")
         assert dataset_custom.dataset_name == "my_dataset"
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_compute_quad_maps(self, simple_dataset):
-        """Тест генерации карт score и geo"""
+        """Test generation of score and geo maps"""
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
-        # Создаем квадрат
+        # Create a square
         quad = np.array(
             [[50, 50], [150, 50], [150, 150], [50, 150]], dtype=np.float32
         )
 
         score_map, geo_map = dataset.compute_quad_maps([quad])
 
-        # Проверки размеров
+        # Check dimensions
         assert score_map.shape == (128, 128)
         assert geo_map.shape == (8, 128, 128)
 
-        # Должна быть хотя бы одна единица в score_map (внутри квадрата)
+        # Should have at least one positive value in score_map (inside the quad)
         assert np.sum(score_map) > 0
         assert score_map.max() == 1.0
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_compute_quad_maps_multiple_quads(self, simple_dataset):
-        """Тест генерации карт с несколькими квадратами"""
+        """Test map generation with multiple quads"""
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
@@ -408,39 +407,39 @@ class TestEASTDataset:
 
         score_map, geo_map = dataset.compute_quad_maps([quad1, quad2])
 
-        # Обе области должны быть помечены
+        # Both regions should be marked
         assert np.sum(score_map) > 0
         assert score_map.shape == (128, 128)
         assert geo_map.shape == (8, 128, 128)
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_compute_quad_maps_empty(self, simple_dataset):
-        """Тест генерации карт без квадратов"""
+        """Test map generation without quads"""
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
         score_map, geo_map = dataset.compute_quad_maps([])
 
-        # Должны быть нулевые карты
+        # Should have zero maps
         assert score_map.shape == (128, 128)
         assert geo_map.shape == (8, 128, 128)
         assert np.sum(score_map) == 0
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_east_dataset_segmentation_variants(self, tmp_path):
-        """Тест различных форматов segmentation"""
+        """Test various segmentation formats"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}
             ],
             "annotations": [
-                # Вариант 1: простой список
+                # Variant 1: simple list
                 {
                     "id": 1,
                     "image_id": 1,
                     "segmentation": [[10, 10, 50, 10, 50, 30, 10, 30]],
                 },
-                # Вариант 2: аннотация без segmentation
+                # Variant 2: annotation without segmentation
                 {"id": 2, "image_id": 1},
-                # Вариант 3: пустая segmentation
+                # Variant 3: empty segmentation
                 {"id": 3, "image_id": 1, "segmentation": []},
             ],
         }
@@ -456,19 +455,19 @@ class TestEASTDataset:
         dataset = EASTDataset(str(img_dir), str(ann_file))
         _, target = dataset[0]
 
-        # Должен быть только 1 валидный quad
-        assert target["rboxes"].shape[0] >= 1
-    @pytest.mark.skip(reason="Временно отключено")
+        # Should have at least 1 valid quad
+        assert target["quads"].shape[0] >= 1
+
     def test_east_dataset_scaling(self, tmp_path):
-        """Тест правильности масштабирования координат"""
-        # Изображение 640x480, target_size=512
+        """Test correct coordinate scaling"""
+        # Image 640x480, target_size=512
         annotations = {
             "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
                 {
                     "id": 1,
                     "image_id": 1,
-                    # Квадрат в исходных координатах
+                    # Square in original coordinates
                     "segmentation": [[100, 100, 200, 100, 200, 200, 100, 200]],
                 }
             ],
@@ -485,19 +484,20 @@ class TestEASTDataset:
         dataset = EASTDataset(str(img_dir), str(ann_file), target_size=512)
         _, target = dataset[0]
 
-        # Проверяем что квадраты были масштабированы
-        assert target["rboxes"].shape[0] == 1
-        # Координаты должны быть в диапазоне [0, 512]
-        rbox = target["rboxes"][0]
-        assert 0 <= rbox[0] <= 512  # cx
-        assert 0 <= rbox[1] <= 512  # cy
+        # Check that quads were scaled
+        assert target["quads"].shape[0] == 1
+        # Coordinates should be in range [0, 512]
+        quad = target["quads"][0].reshape(4, 2)
+        assert quad.min() >= 0
+        assert quad.max() <= 512
 
-@pytest.mark.skip(reason="Временно отключено")
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 class TestEASTDatasetEdgeCases:
-    """Тесты граничных случаев для EASTDataset"""
+    """Edge case tests for EASTDataset"""
 
     def test_very_small_quad(self, tmp_path):
-        """Тест с очень маленьким квадратом"""
+        """Test with a very small square"""
         annotations = {
             "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
@@ -518,12 +518,12 @@ class TestEASTDatasetEdgeCases:
         cv2.imwrite(str(img_dir / "test.jpg"), img)
 
         dataset = EASTDataset(str(img_dir), str(ann_file))
-        # Должен обработаться без ошибок
+        # Should process without errors
         img_tensor, target = dataset[0]
         assert img_tensor.shape == (3, 512, 512)
-    @pytest.mark.skip(reason="Временно отключено")
+
     def test_quad_at_image_boundary(self, tmp_path):
-        """Тест с квадратом на границе изображения"""
+        """Test with quad at image boundary"""
         annotations = {
             "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
@@ -532,7 +532,7 @@ class TestEASTDatasetEdgeCases:
                     "image_id": 1,
                     "segmentation": [
                         [0, 0, 100, 0, 100, 100, 0, 100]
-                    ],  # В углу изображения
+                    ],  # At image corner
                 }
             ],
         }
@@ -548,11 +548,11 @@ class TestEASTDatasetEdgeCases:
         dataset = EASTDataset(str(img_dir), str(ann_file))
         img_tensor, target = dataset[0]
 
-        # Должен обработаться корректно
-        assert target["rboxes"].shape[0] >= 1
-    @pytest.mark.skip(reason="Временно отключено")
+        # Should process correctly
+        assert target["quads"].shape[0] >= 1
+
     def test_different_score_geo_scales(self, simple_dataset):
-        """Тест с разными значениями score_geo_scale"""
+        """Test with different score_geo_scale values"""
         img_dir, ann_file = simple_dataset
 
         dataset_025 = EASTDataset(img_dir, ann_file, score_geo_scale=0.25)
@@ -561,13 +561,13 @@ class TestEASTDatasetEdgeCases:
         _, target_025 = dataset_025[0]
         _, target_050 = dataset_050[0]
 
-        # Размеры карт должны различаться
+        # Map dimensions should differ
         assert target_025["score_map"].shape[1:] == (128, 128)  # 512 * 0.25
         assert target_050["score_map"].shape[1:] == (256, 256)  # 512 * 0.5
 
     @pytest.fixture
     def simple_dataset(self, tmp_path):
-        """Создает простой датасет с одним изображением"""
+        """Creates a simple dataset with one image"""
         annotations = {
             "images": [
                 {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}

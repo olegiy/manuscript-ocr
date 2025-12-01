@@ -164,12 +164,12 @@ def sort_boxes_reading_order_with_resolutions(
     boxes: List[Tuple[float, float, float, float]],
     y_tol_ratio: float = 0.6,
     x_gap_ratio: float = np.inf,
-) -> List[Tuple[float, float, float, float]]:
+) -> List[List[Tuple[float, float, float, float]]]:
     """
-    Sort boxes in reading order after resolving intersections.
+    Sort boxes in reading order after resolving intersections, grouped by lines.
     
     This function first resolves overlapping boxes by shrinking them, then applies
-    reading order sorting. Useful when boxes may overlap slightly.
+    reading order sorting and returns boxes grouped by detected text lines.
     
     Parameters
     ----------
@@ -182,33 +182,122 @@ def sort_boxes_reading_order_with_resolutions(
         
     Returns
     -------
-    list of tuple
-        Original boxes sorted in reading order (intersections resolved internally).
+    list of list of tuple
+        List of lines, where each line is a list of boxes sorted left-to-right.
+        Lines are sorted top-to-bottom.
         
     Examples
     --------
-    >>> boxes = [(10, 10, 55, 30), (50, 10, 100, 30)]  # Overlapping
-    >>> sorted_boxes = sort_boxes_reading_order_with_resolutions(boxes)
-    >>> sorted_boxes[0]
-    (10, 10, 55, 30)
+    >>> boxes = [(10, 10, 55, 30), (60, 10, 100, 30), (10, 50, 50, 70)]
+    >>> lines = sort_boxes_reading_order_with_resolutions(boxes)
+    >>> len(lines)  # Two lines detected
+    2
+    >>> len(lines[0])  # First line has 2 boxes
+    2
     
     Notes
     -----
     - First resolves overlaps by iterative shrinking
-    - Then applies reading order sorting
-    - Returns original (non-shrunk) boxes in sorted order
-    - Maintains original box dimensions in output
+    - Groups boxes into lines based on vertical proximity
+    - Within each line, boxes are sorted left-to-right
+    - Returns original (non-shrunk) boxes grouped by lines
+    - DEPRECATED: Use sort_into_lines() instead
     """
+    return sort_into_lines(boxes, y_tol_ratio=y_tol_ratio, x_gap_ratio=x_gap_ratio)
+
+
+def sort_into_lines(
+    boxes: List[Tuple[float, float, float, float]],
+    y_tol_ratio: float = 0.6,
+    x_gap_ratio: float = np.inf,
+) -> List[List[Tuple[float, float, float, float]]]:
+    """
+    Sort boxes into text lines with reading order.
+    
+    Groups boxes into lines based on vertical proximity, resolving any overlaps first.
+    Each line contains boxes sorted left-to-right, and lines are ordered top-to-bottom.
+    
+    Parameters
+    ----------
+    boxes : list of tuple
+        List of boxes in format (x_min, y_min, x_max, y_max).
+    y_tol_ratio : float, default=0.6
+        Vertical tolerance as a ratio of average box height for grouping boxes
+        into the same line. Boxes within this vertical distance are considered
+        part of the same line.
+    x_gap_ratio : float, default=np.inf
+        Maximum horizontal gap as a ratio of average box height for boxes to be
+        considered part of the same line. Use np.inf for no horizontal constraint.
+        
+    Returns
+    -------
+    list of list of tuple
+        List of lines, where each line is a list of boxes sorted left-to-right.
+        Lines are sorted top-to-bottom. Original box coordinates are preserved.
+        
+    Examples
+    --------
+    >>> boxes = [(10, 10, 50, 30), (60, 10, 100, 30), (10, 50, 50, 70)]
+    >>> lines = sort_into_lines(boxes)
+    >>> len(lines)  # Two lines detected
+    2
+    >>> len(lines[0])  # First line has 2 boxes
+    2
+    >>> lines[0][0]  # First box in first line
+    (10, 10, 50, 30)
+    
+    Notes
+    -----
+    - First resolves box overlaps by iterative shrinking
+    - Groups boxes into lines based on vertical center proximity
+    - Within each line, boxes are sorted left-to-right
+    - Returns original (non-shrunk) boxes in grouped structure
+    - Useful for converting flat detection output to line-based structure
+    """
+    if not boxes:
+        return []
+    
     # Resolve intersections
     compressed = resolve_intersections(boxes)
     
     # Create mapping from compressed to original
     mapping = {c: o for c, o in zip(compressed, boxes)}
     
-    # Sort compressed boxes
-    sorted_compressed = sort_boxes_reading_order(
-        compressed, y_tol_ratio=y_tol_ratio, x_gap_ratio=x_gap_ratio
-    )
+    # Calculate average box height
+    avg_h = np.mean([b[3] - b[1] for b in compressed])
+    lines = []
     
-    # Return original boxes in sorted order
-    return [mapping[b] for b in sorted_compressed]
+    # Sort boxes by vertical position first
+    for b in sorted(compressed, key=lambda b: (b[1] + b[3]) / 2):
+        cy = (b[1] + b[3]) / 2  # Center Y
+        placed = False
+        
+        # Try to add to existing line
+        for ln in lines:
+            line_cy = np.mean([(v[1] + v[3]) / 2 for v in ln])
+            last_x1 = max(v[2] for v in ln)
+            
+            # Check vertical proximity and horizontal gap
+            if (
+                abs(cy - line_cy) <= avg_h * y_tol_ratio
+                and (b[0] - last_x1) <= avg_h * x_gap_ratio
+            ):
+                ln.append(b)
+                placed = True
+                break
+        
+        # Create new line if not placed
+        if not placed:
+            lines.append([b])
+    
+    # Sort lines by vertical position
+    lines.sort(key=lambda ln: np.mean([(b[1] + b[3]) / 2 for b in ln]))
+    
+    # Sort boxes within each line by horizontal position and map back to originals
+    result = []
+    for ln in lines:
+        ln.sort(key=lambda b: b[0])
+        original_line = [mapping[b] for b in ln]
+        result.append(original_line)
+    
+    return result

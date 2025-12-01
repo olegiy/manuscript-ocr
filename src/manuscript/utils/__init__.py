@@ -20,7 +20,8 @@ from .visualization import (
 from .sorting import (
     resolve_intersections,
     sort_boxes_reading_order,
-    sort_boxes_reading_order_with_resolutions,
+    sort_boxes_reading_order_with_resolutions,  # deprecated, use sort_into_lines
+    sort_into_lines,
 )
 
 # Metrics and evaluation utilities
@@ -48,7 +49,8 @@ __all__ = [
     # Sorting/Postprocessing
     "resolve_intersections",
     "sort_boxes_reading_order",
-    "sort_boxes_reading_order_with_resolutions",
+    "sort_boxes_reading_order_with_resolutions",  # deprecated
+    "sort_into_lines",
     # Metrics
     "match_boxes",
     "compute_f1_score",

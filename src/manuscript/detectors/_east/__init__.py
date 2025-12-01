@@ -10,8 +10,10 @@ import onnxruntime as ort
 import torch
 from torch.utils.data import ConcatDataset
 
-from ...data import Block, Page, Word
-from ...utils import read_image, visualize_page, sort_boxes_reading_order_with_resolutions
+from manuscript.api.base import BaseModel
+
+from ...data import Block, Line, Page, Word
+from ...utils import read_image, sort_into_lines
 from .dataset import EASTDataset
 from .east import EASTModel
 from .lanms import locality_aware_nms
@@ -22,11 +24,82 @@ from .utils import (
 )
 
 
-class EAST:
+
+
+class EAST(BaseModel):
+    """
+    Initialize EAST text detector with ONNX Runtime.
+
+    Parameters
+    ----------
+    weights_path : str or Path, optional
+        Path to ONNX model weights. If None, the model will be
+        automatically downloaded to ``~/.manuscript/east/east_50_g1.onnx``.
+    device : str, optional
+        Compute device: ``"cuda"`` or ``"cpu"``. If None, selected automatically.
+        Note: CUDA requires onnxruntime-gpu package.
+    target_size : int, optional
+        Input image size for inference. Images are resized to
+        ``(target_size, target_size)``. Default is 1280.
+    expand_ratio_w : float, optional
+        Horizontal expansion factor applied to detected boxes after NMS.
+        Default is 0.7.
+    expand_ratio_h : float, optional
+        Vertical expansion factor applied to detected boxes after NMS.
+        Default is 0.7.
+    expand_power : float, optional
+        Power for non-linear box expansion. Controls how expansion scales with box size.
+        - 1.0 = linear (small and large boxes expand equally)
+        - <1.0 = small boxes expand more (e.g., 0.5, recommended for character-level detection)
+        - >1.0 = large boxes expand more
+        Default is 0.5.
+    score_thresh : float, optional
+        Confidence threshold for selecting candidate detections before NMS.
+        Default is 0.7.
+    iou_threshold : float, optional
+        IoU threshold for locality-aware NMS merging phase. Default is 0.2.
+    iou_threshold_standard : float, optional
+        IoU threshold for standard NMS after locality-aware merging.
+        If None, uses the same value as iou_threshold. Default is None.
+    score_geo_scale : float, optional
+        Scale factor for decoding geometry/score maps. Default is 0.25.
+    quantization : int, optional
+        Quantization resolution for point coordinates during decoding.
+        Default is 2.
+    axis_aligned_output : bool, optional
+        If True, outputs axis-aligned rectangles instead of original quads.
+        Default is True.
+    remove_area_anomalies : bool, optional
+        If True, removes quads with extremely large area relative to the
+        distribution. Default is False.
+    anomaly_sigma_threshold : float, optional
+        Sigma threshold for anomaly area filtering. Default is 5.0.
+    anomaly_min_box_count : int, optional
+        Minimum number of boxes required before anomaly filtering.
+        Default is 30.
+
+    Notes
+    -----
+    The class provides two main public methods:
+
+    - ``predict`` — run inference on a single image and return detections.
+    - ``train`` — high-level training entrypoint to train an EAST model on custom datasets.
+
+    The detector uses ONNX Runtime for fast inference on CPU and GPU.
+    For GPU acceleration, install: ``pip install onnxruntime-gpu``
+    """
+
+    default_weights_name = "east_50_g1"
+
+    pretrained_registry = {
+        "east_50_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/east_50_g1.onnx",
+    }
+
     def __init__(
         self,
-        weights_path: Optional[Union[str, Path]] = None,
+        weights: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
+        *,
         target_size: int = 1280,
         expand_ratio_w: float = 1.4,
         expand_ratio_h: float = 1.5,
@@ -40,111 +113,41 @@ class EAST:
         remove_area_anomalies: bool = False,
         anomaly_sigma_threshold: float = 5.0,
         anomaly_min_box_count: int = 30,
+        **kwargs,
     ):
-        """
-        Initialize EAST text detector with ONNX Runtime.
+        super().__init__(weights=weights, device=device, **kwargs)
 
-        Parameters
-        ----------
-        weights_path : str or Path, optional
-            Path to ONNX model weights. If None, the model will be
-            automatically downloaded to ``~/.manuscript/east/east_quad_23_05.onnx``.
-        device : str, optional
-            Compute device: ``"cuda"`` or ``"cpu"``. If None, selected automatically.
-            Note: CUDA requires onnxruntime-gpu package.
-        target_size : int, optional
-            Input image size for inference. Images are resized to
-            ``(target_size, target_size)``. Default is 1280.
-        expand_ratio_w : float, optional
-            Horizontal expansion factor applied to detected boxes after NMS.
-            Default is 0.7.
-        expand_ratio_h : float, optional
-            Vertical expansion factor applied to detected boxes after NMS.
-            Default is 0.7.
-        expand_power : float, optional
-            Power for non-linear box expansion. Controls how expansion scales with box size.
-            - 1.0 = linear (small and large boxes expand equally)
-            - <1.0 = small boxes expand more (e.g., 0.5, recommended for character-level detection)
-            - >1.0 = large boxes expand more
-            Default is 0.5.
-        score_thresh : float, optional
-            Confidence threshold for selecting candidate detections before NMS.
-            Default is 0.7.
-        iou_threshold : float, optional
-            IoU threshold for locality-aware NMS merging phase. Default is 0.2.
-        iou_threshold_standard : float, optional
-            IoU threshold for standard NMS after locality-aware merging.
-            If None, uses the same value as iou_threshold. Default is None.
-        score_geo_scale : float, optional
-            Scale factor for decoding geometry/score maps. Default is 0.25.
-        quantization : int, optional
-            Quantization resolution for point coordinates during decoding.
-            Default is 2.
-        axis_aligned_output : bool, optional
-            If True, outputs axis-aligned rectangles instead of original quads.
-            Default is True.
-        remove_area_anomalies : bool, optional
-            If True, removes quads with extremely large area relative to the
-            distribution. Default is False.
-        anomaly_sigma_threshold : float, optional
-            Sigma threshold for anomaly area filtering. Default is 5.0.
-        anomaly_min_box_count : int, optional
-            Minimum number of boxes required before anomaly filtering.
-            Default is 30.
-
-        Notes
-        -----
-        The class provides two main public methods:
-
-        - ``predict`` — run inference on a single image and return detections.
-        - ``train`` — high-level training entrypoint to train an EAST model
-          on custom datasets.
-
-        The detector uses ONNX Runtime for fast inference on CPU and GPU.
-        For GPU acceleration, install: ``pip install onnxruntime-gpu``
-        """
-        self.device = device or ("cuda" if ort.get_device() == "GPU" else "cpu")
-
-        if weights_path is None:
-            url = (
-                "https://github.com/konstantinkozhin/manuscript-ocr"
-                "/releases/download/v0.1.0/east_quad_23_05.onnx"
-            )
-            weights_dir = Path.home() / ".manuscript" / "east"
-            weights_dir.mkdir(parents=True, exist_ok=True)
-            out = weights_dir / "east_quad_23_05.onnx"
-            if not out.exists():
-                print(f"Downloading EAST ONNX model from {url} …")
-                gdown.download(url, str(out), quiet=False)
-            weights_path = str(out)
-
-        if not Path(weights_path).exists():
-            raise FileNotFoundError(f"ONNX model not found: {weights_path}")
-
-        providers = []
-        if self.device == "cuda":
-            providers.append("CUDAExecutionProvider")
-        providers.append("CPUExecutionProvider")
-
-        self.onnx_session = ort.InferenceSession(str(weights_path), providers=providers)
+        self.onnx_session = None
 
         self.target_size = target_size
-        self.score_geo_scale = score_geo_scale
         self.expand_ratio_w = expand_ratio_w
         self.expand_ratio_h = expand_ratio_h
         self.expand_power = expand_power
+
         self.score_thresh = score_thresh
         self.iou_threshold = iou_threshold
         self.iou_threshold_standard = iou_threshold_standard
+
+        self.score_geo_scale = score_geo_scale
         self.quantization = quantization
+
         self.axis_aligned_output = axis_aligned_output
         self.remove_area_anomalies = remove_area_anomalies
         self.anomaly_sigma_threshold = anomaly_sigma_threshold
         self.anomaly_min_box_count = anomaly_min_box_count
 
-    def _scale_boxes_to_original(
-        self, boxes: np.ndarray, orig_size: Tuple[int, int]
-    ) -> np.ndarray:
+    def _initialize_session(self):
+        if self.onnx_session is not None:
+            return
+
+        providers = self.runtime_providers()
+
+        self.onnx_session = ort.InferenceSession(
+            self.weights,
+            providers=providers,
+        )
+
+    def _scale_boxes_to_original(self, boxes: np.ndarray, orig_size: Tuple[int, int]) -> np.ndarray:
         if len(boxes) == 0:
             return boxes
 
@@ -246,8 +249,6 @@ class EAST:
     def predict(
         self,
         img_or_path: Union[str, Path, np.ndarray],
-        vis: bool = False,
-        profile: bool = False,
         return_maps: bool = False,
         sort_reading_order: bool = True,
     ) -> Dict[str, Any]:
@@ -259,18 +260,13 @@ class EAST:
         img_or_path : str or pathlib.Path or numpy.ndarray
             Path to an image file or an RGB image provided as a NumPy array
             with shape ``(H, W, 3)`` in ``uint8`` format.
-        vis : bool, optional
-            If True, a visualization image with rendered detections will be
-            returned under the key ``"vis_image"``. Default is False.
-        profile : bool, optional
-            If True, prints timing information for the main inference stages.
-            Default is False.
         return_maps : bool, optional
             If True, returns raw model score and geometry maps under keys
             ``"score_map"`` and ``"geo_map"``. Default is False.
         sort_reading_order : bool, optional
             If True, sorts detected words in natural reading order
-            (left-to-right, top-to-bottom). Default is True.
+            (left-to-right, top-to-bottom) and groups them into text lines.
+            Default is True.
 
         Returns
         -------
@@ -278,11 +274,9 @@ class EAST:
             Dictionary with the following keys:
 
             - ``"page"`` : Page
-                Parsed detection result containing detected ``Word`` objects
-                with polygon coordinates and confidence scores.
-            - ``"vis_image"`` : PIL.Image.Image or None
-                Visualization image with drawn bounding boxes if ``vis=True``,
-                otherwise ``None``.
+                Parsed detection result as a Page object containing Block(s) with
+                Line(s) of Word objects. Each Word has polygon coordinates and
+                confidence scores. Words and Lines have reading order indices.
             - ``"score_map"`` : numpy.ndarray or None
                 Raw score map produced by the network if ``return_maps=True``.
             - ``"geo_map"`` : numpy.ndarray or None
@@ -293,25 +287,42 @@ class EAST:
         The method performs:
         (1) image loading, (2) resizing and normalization, (3) model inference,
         (4) quad decoding, (5) NMS, (6) box expansion, (7) scaling coordinates
-        back to original size, and (8) optional visualization.
+        back to original size, (8) optional reading order sorting into lines.
+        
+        For visualization, use the external ``visualize_page`` utility:
+        
+        >>> from manuscript.utils import visualize_page
+        >>> result = model.predict(img_path)
+        >>> vis_img = visualize_page(img, result["page"])
 
         Examples
         --------
-        Perform inference with visualization:
+        Perform inference and get structured output:
 
         >>> from manuscript.detectors import EAST
         >>> model = EAST()
         >>> img_path = r"example/ocr_example_image.jpg"
-        >>> result = model.predict(img_path, vis=True)
+        >>> result = model.predict(img_path)
         >>> page = result["page"]
-        >>> vis_img = result["vis_image"]
+        >>> # Access first line's first word
+        >>> first_word = page.blocks[0].lines[0].words[0]
+        >>> print(f"Confidence: {first_word.detection_confidence}")
+        
+        Visualize results separately:
+        
+        >>> from manuscript.utils import visualize_page, read_image
+        >>> result = model.predict(img_path)
+        >>> img = read_image(img_path)
+        >>> vis_img = visualize_page(img, result["page"])
         >>> vis_img.show()
 
         """
+
+        if self.onnx_session is None:
+            self._initialize_session()
+
         img = read_image(img_or_path)
         resized = cv2.resize(img, (self.target_size, self.target_size))
-
-        t0 = time.time()
 
         img_norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
         img_input = img_norm.transpose(2, 0, 1)[np.newaxis, :, :, :]
@@ -324,45 +335,29 @@ class EAST:
         score_map = outputs[0].squeeze(0).squeeze(0)
         geo_map = outputs[1].squeeze(0)
 
-        if profile:
-            print(f"  Model inference: {time.time() - t0:.3f}s")
-
-        t0 = time.time()
         final_quads = decode_quads_from_maps(
             score_map=score_map,
             geo_map=geo_map.transpose(1, 2, 0),
             score_thresh=self.score_thresh,
             scale=1.0 / self.score_geo_scale,
             quantization=self.quantization,
-            profile=profile,
         )
-        if profile:
-            print(f"  Decode boxes: {time.time() - t0:.3f}s")
 
-        # 5) Apply NMS
-        t0 = time.time()
         final_quads_nms = locality_aware_nms(
-            final_quads, 
+            final_quads,
             iou_threshold=self.iou_threshold,
-            iou_threshold_standard=self.iou_threshold_standard
+            iou_threshold_standard=self.iou_threshold_standard,
         )
-        if profile:
-            print(f"  NMS: {time.time() - t0:.3f}s")
-            print(f"    Boxes after NMS: {len(final_quads_nms)}")
 
-        # 6) Expand (inverse shrink) with non-linear scaling
-        final_quads_nms_expanded = expand_boxes(
+        expanded = expand_boxes(
             final_quads_nms,
             expand_w=self.expand_ratio_w,
             expand_h=self.expand_ratio_h,
             expand_power=self.expand_power,
         )
 
-        # 7) Scale coordinates back to original image size
         orig_h, orig_w = img.shape[:2]
-        scaled_quads = self._scale_boxes_to_original(
-            final_quads_nms_expanded, (orig_h, orig_w)
-        )
+        scaled_quads = self._scale_boxes_to_original(expanded, (orig_h, orig_w))
 
         processed_quads = self._remove_fully_contained_boxes(scaled_quads)
         processed_quads = self._remove_area_anomalies(processed_quads)
@@ -372,51 +367,56 @@ class EAST:
             else processed_quads
         )
 
-        # 8) Build Page with scaled coordinates (after NMS & expand)
+        # Create Word objects from quads
         words: List[Word] = []
         for quad in output_quads:
             pts = quad[:8].reshape(4, 2)
             score = float(np.clip(quad[8], 0.0, 1.0))
             words.append(Word(polygon=pts.tolist(), detection_confidence=score))
 
-        # 9) Optional sorting in reading order
+        # Build Page structure with Lines
         if sort_reading_order and len(words) > 0:
-            # Convert to boxes (x_min, y_min, x_max, y_max) for sorting
+            # Convert words to boxes for sorting
+            word_to_box = {}
             boxes = []
             for w in words:
                 poly = np.array(w.polygon, dtype=np.int32)
                 x_min, y_min = np.min(poly, axis=0)
                 x_max, y_max = np.max(poly, axis=0)
-                boxes.append((x_min, y_min, x_max, y_max))
+                box = (int(x_min), int(y_min), int(x_max), int(y_max))
+                boxes.append(box)
+                word_to_box[box] = w
+            
+            # Sort into lines (list of list of boxes)
+            lines_of_boxes = sort_into_lines(boxes)
+            
+            # Convert to Line objects with ordered Words
+            lines: List[Line] = []
+            for line_idx, line_boxes in enumerate(lines_of_boxes):
+                line_words = []
+                for word_idx, box in enumerate(line_boxes):
+                    word = word_to_box[box]
+                    # Set word order within the line
+                    word.order = word_idx
+                    line_words.append(word)
+                
+                # Create Line with order
+                line = Line(words=line_words, order=line_idx)
+                lines.append(line)
+            
+            # Create Page with single Block containing all Lines
+            page = Page(blocks=[Block(lines=lines, order=0)])
+        else:
+            # No sorting - put all words in single line in single block
+            for idx, w in enumerate(words):
+                w.order = idx
+            page = Page(blocks=[Block(lines=[Line(words=words, order=0)], order=0)])
 
-            # Sort boxes in reading order
-            sorted_boxes = sort_boxes_reading_order_with_resolutions(boxes)
-
-            # Reorder words based on sorted boxes
-            new_order = []
-            for bx in sorted_boxes:
-                for w in words:
-                    poly = np.array(w.polygon, dtype=np.int32)
-                    x_min, y_min = np.min(poly, axis=0)
-                    x_max, y_max = np.max(poly, axis=0)
-                    if (x_min, y_min, x_max, y_max) == bx:
-                        new_order.append(w)
-                        break
-            words = new_order
-
-        page = Page(blocks=[Block(words=words)])
-
-        # 10) Optional visualization
-        vis_img = visualize_page(img, page, show_order=False) if vis else None
-
-        result: Dict[str, Any] = {
+        return {
             "page": page,
-            "vis_image": vis_img,
             "score_map": score_map if return_maps else None,
             "geo_map": geo_map if return_maps else None,
         }
-
-        return result
 
     @staticmethod
     def train(
@@ -759,7 +759,7 @@ class EAST:
         return best_model
 
     @staticmethod
-    def export_to_onnx(
+    def export(
         weights_path: Union[str, Path],
         output_path: Union[str, Path],
         backbone_name: str = None,
@@ -1029,4 +1029,3 @@ class EAST:
         print(f"Output shapes:")
         print(f"  - score_map: [batch_size, 1, H, W]")
         print(f"  - geo_map: [batch_size, 8, H, W]")
-

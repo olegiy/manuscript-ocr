@@ -1,14 +1,21 @@
 import pytest
-import torch
-import torch.nn as nn
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    nn = None
+
 from manuscript.detectors._east.sam import SAMSolver
 
 
-# --- Тесты для инициализации SAMSolver ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for SAMSolver initialization ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_default():
-    """Тест инициализации SAMSolver с параметрами по умолчанию"""
+    """Test SAMSolver initialization with default parameters"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -19,9 +26,9 @@ def test_sam_solver_initialization_default():
     assert optimizer.param_groups[0]["rho"] == 0.05
     assert optimizer.param_groups[0]["lr"] == 0.01
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_custom_rho():
-    """Тест инициализации SAMSolver с кастомным rho"""
+    """Test SAMSolver initialization with custom rho"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, rho=0.1, lr=0.01
@@ -29,9 +36,9 @@ def test_sam_solver_initialization_custom_rho():
     
     assert optimizer.param_groups[0]["rho"] == 0.1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_adaptive():
-    """Тест инициализации SAMSolver с adaptive режимом"""
+    """Test SAMSolver initialization with adaptive mode"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(),
@@ -42,9 +49,9 @@ def test_sam_solver_initialization_adaptive():
     
     assert optimizer.use_adaptive == True
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_negative_rho():
-    """Тест инициализации SAMSolver с отрицательным rho"""
+    """Test SAMSolver initialization with negative rho"""
     model = nn.Linear(10, 5)
     
     with pytest.raises(ValueError, match="rho must be non-negative"):
@@ -52,9 +59,9 @@ def test_sam_solver_initialization_negative_rho():
             model.parameters(), base_optimizer_cls=torch.optim.SGD, rho=-0.1, lr=0.01
         )
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_adam():
-    """Тест инициализации SAMSolver с Adam оптимизатором"""
+    """Test SAMSolver initialization with Adam optimizer"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001
@@ -62,9 +69,9 @@ def test_sam_solver_initialization_adam():
     
     assert isinstance(optimizer._optimizer, torch.optim.Adam)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_different_optimizers():
-    """Тест инициализации SAMSolver с разными оптимизаторами"""
+    """Test SAMSolver initialization with different optimizers"""
     model = nn.Linear(10, 5)
     
     # SGD
@@ -85,12 +92,10 @@ def test_sam_solver_initialization_different_optimizers():
     )
     assert isinstance(opt_rmsprop._optimizer, torch.optim.RMSprop)
 
-
-# --- Тесты для метода step ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for step method ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_basic():
-    """Тест базового шага оптимизации SAMSolver"""
+    """Test basic SAMSolver optimization step"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -108,7 +113,7 @@ def test_sam_solver_step_basic():
     initial_params = [p.clone() for p in model.parameters()]
     loss = optimizer.step(closure)
     
-    # Проверяем что параметры изменились
+    # Check that parameters changed
     params_changed = any(
         not torch.equal(p1, p2)
         for p1, p2 in zip(initial_params, model.parameters())
@@ -116,9 +121,9 @@ def test_sam_solver_step_basic():
     assert params_changed
     assert isinstance(loss, torch.Tensor)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_reduces_loss():
-    """Тест что SAMSolver уменьшает loss"""
+    """Test that SAMSolver reduces loss"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.1
@@ -135,18 +140,18 @@ def test_sam_solver_step_reduces_loss():
     
     initial_loss = closure().item()
     
-    # Несколько шагов оптимизации
+    # Multiple optimization steps
     for _ in range(10):
         optimizer.step(closure)
     
     final_loss = closure().item()
     
-    # Loss должен уменьшиться после нескольких итераций
+    # Loss should decrease after several iterations
     assert final_loss < initial_loss
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_with_adaptive():
-    """Тест шага SAMSolver в adaptive режиме"""
+    """Test SAMSolver step in adaptive mode"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(),
@@ -167,9 +172,9 @@ def test_sam_solver_step_with_adaptive():
     loss = optimizer.step(closure)
     assert isinstance(loss, torch.Tensor)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_multiple_iterations():
-    """Тест множественных итераций SAMSolver"""
+    """Test multiple SAMSolver iterations"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -189,15 +194,14 @@ def test_sam_solver_step_multiple_iterations():
         loss = optimizer.step(closure)
         losses.append(loss.item())
     
-    # Все loss должны быть валидными
+    # All losses should be valid
     assert all(l >= 0 for l in losses)
 
 
-# --- Тесты для zero_grad ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for zero_grad ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_zero_grad():
-    """Тест метода zero_grad"""
+    """Test zero_grad method"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -206,27 +210,26 @@ def test_sam_solver_zero_grad():
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
     
-    # Создаём градиенты
+    # Create gradients
     output = model(x)
     loss = nn.functional.mse_loss(output, y)
     loss.backward()
     
-    # Проверяем что градиенты есть
+    # Check that gradients exist
     assert any(p.grad is not None for p in model.parameters())
     
-    # Обнуляем
+    # Zero gradients
     optimizer.zero_grad()
     
-    # Проверяем что градиенты обнулились
+    # Check that gradients are zeroed
     assert all(p.grad is None or torch.allclose(p.grad, torch.zeros_like(p.grad)) 
                for p in model.parameters())
 
 
-# --- Тесты для state_dict и load_state_dict ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for state_dict and load_state_dict ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_state_dict():
-    """Тест получения state_dict"""
+    """Test getting state_dict"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -237,15 +240,15 @@ def test_sam_solver_state_dict():
     assert isinstance(state, dict)
     assert "state" in state or "param_groups" in state
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_load_state_dict():
-    """Тест загрузки state_dict"""
+    """Test loading state_dict"""
     model = nn.Linear(10, 5)
     optimizer1 = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     
-    # Делаем шаг оптимизации
+    # Perform an optimization step
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
     
@@ -257,22 +260,23 @@ def test_sam_solver_load_state_dict():
     
     optimizer1.step(closure)
     
-    # Сохраняем состояние
+    # Save state
     state = optimizer1.state_dict()
     
-    # Создаём новый оптимизатор и загружаем состояние
+    # Create new optimizer and load state
     model2 = nn.Linear(10, 5)
     optimizer2 = SAMSolver(
         model2.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     optimizer2.load_state_dict(state)
     
-    # Состояния должны быть одинаковыми
+    # States should be identical
     assert optimizer2.state_dict().keys() == optimizer1.state_dict().keys()
 
-@pytest.mark.skip(reason="Временно отключено")
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_state_persistence():
-    """Тест сохранения и восстановления состояния оптимизатора"""
+    """Test saving and restoring optimizer state"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001
@@ -287,31 +291,30 @@ def test_sam_solver_state_persistence():
         loss = nn.functional.mse_loss(output, y)
         return loss
     
-    # Делаем несколько шагов
+    # Make several steps
     for _ in range(3):
         optimizer.step(closure)
     
-    # Сохраняем состояние
+    # Save state
     saved_state = optimizer.state_dict()
     
-    # Делаем ещё шаги
+    # Make more steps
     for _ in range(3):
         optimizer.step(closure)
     
-    # Восстанавливаем состояние
+    # Restore state
     optimizer.load_state_dict(saved_state)
     
-    # Состояние должно быть восстановлено (проверяем структуру)
+    # State should be restored (check structure)
     current_state = optimizer.state_dict()
     assert current_state.keys() == saved_state.keys()
     assert len(current_state['param_groups']) == len(saved_state['param_groups'])
 
 
-# --- Тесты для _compute_grad_magnitude ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for _compute_grad_magnitude ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_compute_grad_magnitude_with_gradients():
-    """Тест вычисления grad magnitude с градиентами"""
+    """Test computing grad magnitude with gradients"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -320,34 +323,36 @@ def test_sam_solver_compute_grad_magnitude_with_gradients():
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
     
-    # Создаём градиенты
+    # Create gradients
     output = model(x)
     loss = nn.functional.mse_loss(output, y)
     loss.backward()
     
-    # Вычисляем grad magnitude
+    # Compute grad magnitude
     grad_norm = optimizer._compute_grad_magnitude()
     
     assert isinstance(grad_norm, torch.Tensor)
     assert grad_norm > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_compute_grad_magnitude_no_gradients():
-    """Тест вычисления grad magnitude без градиентов"""
+    """Test computing grad magnitude without gradients"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     
-    # Нет градиентов
+    # No gradients
     grad_norm = optimizer._compute_grad_magnitude()
     
     assert isinstance(grad_norm, torch.Tensor)
     assert grad_norm == 0.0
 
-@pytest.mark.skip(reason="Временно отключено")
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_compute_grad_magnitude_adaptive():
-    """Тест вычисления grad magnitude в adaptive режиме"""
+    """Test computing grad magnitude in adaptive mode"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(),
@@ -369,19 +374,18 @@ def test_sam_solver_compute_grad_magnitude_adaptive():
     assert grad_norm > 0
 
 
-# --- Интеграционные тесты ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Integration tests ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_training_loop():
-    """Тест полного цикла обучения с SAMSolver"""
-    # Простая задача регрессии
+    """Test full training loop with SAMSolver"""
+    # Simple regression task
     torch.manual_seed(42)
     model = nn.Sequential(nn.Linear(5, 10), nn.ReLU(), nn.Linear(10, 1))
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     
-    # Генерируем данные
+    # Generate data
     X = torch.randn(100, 5)
     y = torch.randn(100, 1)
     
@@ -393,22 +397,22 @@ def test_sam_solver_training_loop():
     
     initial_loss = closure().item()
     
-    # Обучаем
+    # Train
     for _ in range(20):
         loss = optimizer.step(closure)
     
     final_loss = loss.item()
     
-    # Loss должен уменьшиться
+    # Loss should decrease
     assert final_loss < initial_loss
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_different_model_architectures():
-    """Тест SAMSolver с разными архитектурами моделей"""
+    """Test SAMSolver with different model architectures"""
     x = torch.randn(5, 10)
     y = torch.randn(5, 3)
     
-    # Простая линейная модель
+    # Simple linear model
     model1 = nn.Linear(10, 3)
     opt1 = SAMSolver(model1.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01)
     
@@ -420,7 +424,7 @@ def test_sam_solver_different_model_architectures():
     loss1 = opt1.step(closure1)
     assert torch.isfinite(loss1)
     
-    # Многослойная модель
+    # Multi-layer model
     model2 = nn.Sequential(
         nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10), nn.ReLU(), nn.Linear(10, 3)
     )
@@ -434,15 +438,15 @@ def test_sam_solver_different_model_architectures():
     loss2 = opt2.step(closure2)
     assert torch.isfinite(loss2)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_batch_training():
-    """Тест SAMSolver с batch обучением"""
+    """Test SAMSolver with batch training"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     
-    # Разные размеры batch
+    # Different batch sizes
     for batch_size in [1, 5, 10, 20]:
         x = torch.randn(batch_size, 10)
         y = torch.randn(batch_size, 5)
@@ -456,9 +460,9 @@ def test_sam_solver_batch_training():
         loss = optimizer.step(closure)
         assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_rho_values():
-    """Тест SAMSolver с разными значениями rho"""
+    """Test SAMSolver with different rho values"""
     model = nn.Linear(10, 5)
     x = torch.randn(5, 10)
     y = torch.randn(5, 5)
@@ -477,9 +481,9 @@ def test_sam_solver_rho_values():
         loss = optimizer.step(closure)
         assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_cuda_device():
-    """Тест SAMSolver на CUDA устройстве"""
+    """Test SAMSolver on CUDA device"""
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
     
@@ -501,9 +505,9 @@ def test_sam_solver_cuda_device():
     
     assert loss.device.type == "cuda"
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_cpu_device():
-    """Тест SAMSolver на CPU устройстве"""
+    """Test SAMSolver on CPU device"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
@@ -522,9 +526,9 @@ def test_sam_solver_cpu_device():
     
     assert loss.device.type == "cpu"
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_parameter_updates():
-    """Тест что параметры обновляются корректно"""
+    """Test that parameters are updated correctly"""
     model = nn.Linear(5, 3)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.1
@@ -533,7 +537,7 @@ def test_sam_solver_parameter_updates():
     x = torch.randn(10, 5)
     y = torch.randn(10, 3)
     
-    # Сохраняем начальные параметры
+    # Save initial parameters
     initial_weight = model.weight.clone()
     initial_bias = model.bias.clone()
     
@@ -543,19 +547,19 @@ def test_sam_solver_parameter_updates():
         loss = nn.functional.mse_loss(output, y)
         return loss
     
-    # Делаем шаг
+    # Make a step
     optimizer.step(closure)
     
-    # Параметры должны измениться
+    # Parameters should change
     assert not torch.equal(model.weight, initial_weight)
     assert not torch.equal(model.bias, initial_bias)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_convergence():
-    """Тест сходимости SAMSolver на простой задаче"""
+    """Test SAMSolver convergence on simple task"""
     torch.manual_seed(123)
     
-    # Создаём простую линейную зависимость
+    # Create simple linear dependency
     true_w = torch.randn(5, 1)
     true_b = torch.randn(1)
     
@@ -578,16 +582,16 @@ def test_sam_solver_convergence():
         loss = optimizer.step(closure)
         losses.append(loss.item())
     
-    # Проверяем что loss в целом уменьшается
-    # Берём среднее первых 10 и последних 10
+    # Check that loss generally decreases
+    # Take average of first 10 and last 10
     early_avg = sum(losses[:10]) / 10
     late_avg = sum(losses[-10:]) / 10
     
     assert late_avg < early_avg
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_with_momentum():
-    """Тест SAMSolver с SGD + momentum"""
+    """Test SAMSolver with SGD + momentum"""
     model = nn.Linear(10, 5)
     optimizer = SAMSolver(
         model.parameters(),
@@ -608,12 +612,12 @@ def test_sam_solver_with_momentum():
     loss = optimizer.step(closure)
     assert torch.isfinite(loss)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_small_model():
-    """Тест SAMSolver с маленькой моделью"""
+    """Test SAMSolver with small model"""
     model = nn.Linear(2, 1)
     optimizer = SAMSolver(
-        model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01  # Уменьшили lr
+        model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01  # Reduced lr
     )
     
     x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
@@ -630,7 +634,8 @@ def test_sam_solver_small_model():
     for _ in range(10):
         loss = optimizer.step(closure)
     
+    
     final_loss = loss.item()
     
-    # Проверяем что loss конечен и не взорвался
+    # Check that loss is finite and didn't explode
     assert torch.isfinite(torch.tensor(final_loss))

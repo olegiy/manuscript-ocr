@@ -150,6 +150,7 @@ def visualize_page(
     line_color: Tuple[int, int, int] = (255, 165, 0),
     number_bg: Tuple[int, int, int] = (255, 255, 255),
     number_color: Tuple[int, int, int] = (0, 0, 0),
+    max_size: Optional[int] = 4096,
 ) -> Image.Image:
     """
     Visualize a Page object with detected words/blocks.
@@ -173,12 +174,17 @@ def visualize_page(
         Gaussian blur kernel size (0=no blur, must be odd).
     show_order : bool, default=False
         If True, display reading order with numbers and connecting lines.
+        Also colors different text lines with different colors.
     line_color : tuple of int, default=(255, 165, 0)
         RGB color for connecting lines between words.
     number_bg : tuple of int, default=(255, 255, 255)
         Background color for order number boxes.
     number_color : tuple of int, default=(0, 0, 0)
         Text color for order numbers.
+    max_size : int or None, default=4096
+        Maximum size for the longer dimension of the output image.
+        Image will be resized proportionally if larger. Set to None to
+        keep original size.
         
     Returns
     -------
@@ -216,40 +222,106 @@ def visualize_page(
     else:
         img = image.copy()
     
-    # Collect all quads and words in order
-    quads = []
-    words_in_order = []
+    # Resize image if needed
+    if max_size is not None:
+        h, w = img.shape[:2]
+        max_dim = max(h, w)
+        if max_dim > max_size:
+            scale = max_size / max_dim
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            scale = 1.0
+    else:
+        scale = 1.0
+    
+    # Color palette for different lines (HSV-based for better distinction)
+    def get_line_color(line_idx: int) -> Tuple[int, int, int]:
+        """Generate distinct colors for different lines using HSV color space."""
+        # Use golden ratio for better color distribution
+        golden_ratio = 0.618033988749895
+        hue = (line_idx * golden_ratio) % 1.0
+        
+        # Convert HSV to RGB
+        h = int(hue * 179)  # OpenCV uses 0-179 for hue
+        s = 220  # High saturation
+        v = 255  # Full brightness
+        
+        hsv = np.uint8([[[h, s, v]]])
+        rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)[0][0]
+        return tuple(map(int, rgb))
+    
+    # Collect all quads and words in order, grouped by lines
+    lines_data = []  # List of (line_quads, line_words, line_index)
     
     for block in page.blocks:
-        for w in block.words:
-            poly = np.array(w.polygon).reshape(-1)
-            quads.append(poly)
-            words_in_order.append(w)
+        # Support both new (lines-based) and legacy (words-based) structure
+        if block.lines:
+            # New structure: iterate through lines
+            for line_idx, line in enumerate(block.lines):
+                line_quads = []
+                line_words = []
+                for w in line.words:
+                    poly = np.array(w.polygon)
+                    if scale != 1.0:
+                        poly = poly * scale
+                    line_quads.append(poly.reshape(-1))
+                    line_words.append(w)
+                if line_quads:
+                    lines_data.append((line_quads, line_words, line_idx))
+        elif block.words:
+            # Legacy structure: direct words list - treat as single line
+            line_quads = []
+            line_words = []
+            for w in block.words:
+                poly = np.array(w.polygon)
+                if scale != 1.0:
+                    poly = poly * scale
+                line_quads.append(poly.reshape(-1))
+                line_words.append(w)
+            if line_quads:
+                lines_data.append((line_quads, line_words, 0))
     
-    if len(quads) == 0:
+    if len(lines_data) == 0:
         return Image.fromarray(img) if isinstance(image, np.ndarray) else image
     
-    quads = np.stack(quads, axis=0)
+    # Apply darkening if requested
+    if dark_alpha > 0:
+        overlay = (img * (1 - dark_alpha)).astype(np.uint8)
+    else:
+        overlay = img
     
-    # Draw polygons
-    out = draw_quads(
-        image=img,
-        quads=quads,
-        color=color,
-        thickness=thickness,
-        dark_alpha=dark_alpha,
-        blur_ksize=blur_ksize,
-    )
+    # Apply blur if requested
+    if blur_ksize > 0:
+        overlay = cv2.GaussianBlur(overlay, (blur_ksize, blur_ksize), 0)
+    
+    # Draw quads with line-specific colors if show_order is True
+    for line_quads, line_words, line_idx in lines_data:
+        # Choose color: different per line if show_order, otherwise use default
+        draw_color = get_line_color(line_idx) if show_order else color
+        
+        # Draw each quad in this line
+        for quad in line_quads:
+            coords = quad[:8].reshape(4, 2).astype(np.int32)
+            cv2.polylines(overlay, [coords], isClosed=True, color=draw_color, thickness=thickness)
+    
+    out = Image.fromarray(overlay)
     
     # Add reading order visualization if requested
     if show_order:
         draw = ImageDraw.Draw(out)
         
+        # Collect all words in reading order
+        all_words = []
+        for line_quads, line_words, line_idx in lines_data:
+            all_words.extend(line_words)
+        
         # Calculate centers of all words
         centers = []
-        for w in words_in_order:
-            xs = [p[0] for p in w.polygon]
-            ys = [p[1] for p in w.polygon]
+        for w in all_words:
+            xs = [p[0] * scale for p in w.polygon]
+            ys = [p[1] * scale for p in w.polygon]
             centers.append((sum(xs) / len(xs), sum(ys) / len(ys)))
         
         # Draw connecting lines between consecutive words
@@ -257,13 +329,29 @@ def visualize_page(
             for p, c in zip(centers, centers[1:]):
                 draw.line([p, c], fill=line_color, width=3)
         
-        # Draw numbered boxes at centers
+        # Draw numbered boxes at centers with transparency
+        # Create a transparent overlay for the number backgrounds
+        overlay = Image.new('RGBA', out.size, (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        
         for idx, c in enumerate(centers, start=1):
             cx, cy = c
-            draw.rectangle(
+            # Draw semi-transparent background rectangle
+            bg_with_alpha = number_bg + (128,)  # Add alpha=128 (0.5 * 255)
+            overlay_draw.rectangle(
                 [cx - 12, cy - 12, cx + 12, cy + 12],
-                fill=number_bg,
+                fill=bg_with_alpha,
             )
+        
+        # Composite the overlay onto the main image
+        out = out.convert('RGBA')
+        out = Image.alpha_composite(out, overlay)
+        out = out.convert('RGB')
+        
+        # Now draw text on top (opaque)
+        draw = ImageDraw.Draw(out)
+        for idx, c in enumerate(centers, start=1):
+            cx, cy = c
             draw.text((cx - 6, cy - 8), str(idx), fill=number_color)
     
     return out

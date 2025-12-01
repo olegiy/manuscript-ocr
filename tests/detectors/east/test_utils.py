@@ -1,8 +1,12 @@
-"""Tests for EAST-specific utility functions."""
-
 import pytest
 import numpy as np
-import torch
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
 
 # Import EAST-specific functions only
 from manuscript.detectors._east.utils import (
@@ -11,10 +15,7 @@ from manuscript.detectors._east.utils import (
     create_collage,
 )
 
-
 # --- Tests for decode_quads_from_maps ---
-
-@pytest.mark.skip(reason="Временно отключено")
 def test_decode_quads_empty_score_map():
     """Test decode_quads_from_maps with empty score map (all zeros)"""
     score_map = np.zeros((64, 64), dtype=np.float32)
@@ -30,7 +31,6 @@ def test_decode_quads_empty_score_map():
     assert quads.shape == (0, 9)
     assert quads.dtype == np.float32
 
-@pytest.mark.skip(reason="Временно отключено")
 def test_decode_quads_single_detection():
     """Test decode_quads_from_maps with single high-confidence pixel"""
     score_map = np.zeros((64, 64), dtype=np.float32)
@@ -51,10 +51,7 @@ def test_decode_quads_single_detection():
     assert quads.shape[1] == 9
     assert quads[0, 8] == pytest.approx(0.9, abs=0.01)
 
-
 # --- Tests for expand_boxes ---
-
-@pytest.mark.skip(reason="Временно отключено")
 def test_expand_boxes_no_expansion():
     """Test expand_boxes with zero expansion parameters"""
     quads = np.array([
@@ -66,7 +63,6 @@ def test_expand_boxes_no_expansion():
     
     assert np.allclose(expanded, quads)
 
-@pytest.mark.skip(reason="Временно отключено")
 def test_expand_boxes_with_expansion():
     """Test expand_boxes with non-zero expansion"""
     quads = np.array([[10, 10, 50, 10, 50, 50, 10, 50, 0.9]], dtype=np.float32)
@@ -77,10 +73,8 @@ def test_expand_boxes_with_expansion():
     assert expanded[0, 8] == quads[0, 8]
     assert not np.allclose(expanded[:, :8], quads[:, :8])
 
-
 # --- Tests for create_collage ---
-
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_create_collage_basic():
     """Test create_collage with basic inputs"""
     img_tensor = torch.rand(3, 128, 128) * 2 - 1
@@ -99,7 +93,7 @@ def test_create_collage_basic():
     assert collage.shape == (128, 640, 3)
     assert collage.dtype == np.uint8
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_create_collage_with_predictions():
     """Test create_collage with both GT and predictions"""
     img_tensor = torch.rand(3, 128, 128) * 2 - 1

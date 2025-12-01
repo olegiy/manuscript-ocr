@@ -1,30 +1,36 @@
 import pytest
-import torch
-import torch.nn as nn
 import numpy as np
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+
 from manuscript.detectors._east.train_utils import (
     dice_coefficient as _dice_coefficient,
     _custom_collate_fn,
 )
 
 
-# --- Тесты для _dice_coefficient ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Tests for _dice_coefficient ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_perfect_match():
-    """Тест Dice coefficient при идеальном совпадении"""
+    """Test Dice coefficient with perfect match"""
     pred = torch.ones(2, 1, 4, 4)
     target = torch.ones(2, 1, 4, 4)
     
     dice = _dice_coefficient(pred, target)
     
-    # При идеальном совпадении dice = 1.0
+    # With perfect match dice = 1.0
     assert dice.shape == (2,)
     assert torch.allclose(dice, torch.ones(2))
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_no_overlap():
-    """Тест Dice coefficient без пересечения"""
+    """Test Dice coefficient with no overlap"""
     pred = torch.zeros(2, 1, 4, 4)
     pred[0, 0, 0, 0] = 1.0
     
@@ -33,27 +39,27 @@ def test_dice_coefficient_no_overlap():
     
     dice = _dice_coefficient(pred, target)
     
-    # Без пересечения dice близок к 0
+    # Without overlap dice is close to 0
     assert dice.shape == (2,)
-    assert dice[0] < 0.1  # Первый sample почти 0
+    assert dice[0] < 0.1  # First sample almost 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_partial_overlap():
-    """Тест Dice coefficient с частичным пересечением"""
+    """Test Dice coefficient with partial overlap"""
     pred = torch.zeros(1, 1, 4, 4)
-    pred[0, 0, :2, :2] = 1.0  # Левый верхний квадрант
+    pred[0, 0, :2, :2] = 1.0  # Top-left quadrant
     
     target = torch.zeros(1, 1, 4, 4)
-    target[0, 0, 1:3, 1:3] = 1.0  # Частичное пересечение
+    target[0, 0, 1:3, 1:3] = 1.0  # Partial overlap
     
     dice = _dice_coefficient(pred, target)
     
     assert dice.shape == (1,)
     assert 0 < dice[0] < 1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_batch_processing():
-    """Тест Dice coefficient с разными batch sizes"""
+    """Test Dice coefficient with different batch sizes"""
     for batch_size in [1, 2, 4, 8]:
         pred = torch.rand(batch_size, 1, 8, 8)
         target = torch.rand(batch_size, 1, 8, 8)
@@ -64,9 +70,9 @@ def test_dice_coefficient_batch_processing():
         assert torch.all(dice >= 0)
         assert torch.all(dice <= 1)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_different_shapes():
-    """Тест Dice coefficient с разными размерами"""
+    """Test Dice coefficient with different shapes"""
     shapes = [(4, 4), (8, 8), (16, 16), (32, 32)]
     
     for h, w in shapes:
@@ -77,32 +83,32 @@ def test_dice_coefficient_different_shapes():
         
         assert dice.shape == (2,)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_multi_channel():
-    """Тест Dice coefficient с несколькими каналами"""
-    pred = torch.rand(2, 3, 4, 4)  # 3 канала
+    """Test Dice coefficient with multiple channels"""
+    pred = torch.rand(2, 3, 4, 4)  # 3 channels
     target = torch.rand(2, 3, 4, 4)
     
     dice = _dice_coefficient(pred, target)
     
-    # Должно работать независимо от числа каналов
+    # Should work regardless of number of channels
     assert dice.shape == (2,)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_zeros():
-    """Тест Dice coefficient с нулевыми тензорами"""
+    """Test Dice coefficient with zero tensors"""
     pred = torch.zeros(2, 1, 4, 4)
     target = torch.zeros(2, 1, 4, 4)
     
     dice = _dice_coefficient(pred, target)
     
-    # Благодаря eps не должно быть division by zero
+    # Thanks to eps, there should be no division by zero
     assert torch.isfinite(dice).all()
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_numerical_stability():
-    """Тест численной стабильности Dice coefficient"""
-    # Очень маленькие значения
+    """Test numerical stability Dice coefficient"""
+    # Very small values
     pred = torch.ones(2, 1, 4, 4) * 1e-8
     target = torch.ones(2, 1, 4, 4) * 1e-8
     
@@ -110,21 +116,21 @@ def test_dice_coefficient_numerical_stability():
     
     assert torch.isfinite(dice).all()
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_custom_eps():
-    """Тест Dice coefficient с кастомным eps"""
+    """Test Dice coefficient with custom eps"""
     pred = torch.rand(2, 1, 4, 4)
     target = torch.rand(2, 1, 4, 4)
     
     dice1 = _dice_coefficient(pred, target, eps=1e-6)
     dice2 = _dice_coefficient(pred, target, eps=1e-3)
     
-    # Разные eps могут давать немного разные результаты
+    # Different eps values may give slightly different results
     assert dice1.shape == dice2.shape
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_gradient():
-    """Тест что градиенты проходят через Dice coefficient"""
+    """Test that gradients flow through Dice coefficient"""
     pred = torch.rand(2, 1, 4, 4, requires_grad=True)
     target = torch.rand(2, 1, 4, 4)
     
@@ -135,9 +141,9 @@ def test_dice_coefficient_gradient():
     assert pred.grad is not None
     assert pred.grad.abs().sum() > 0
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_binary_masks():
-    """Тест Dice coefficient с бинарными масками"""
+    """Test Dice coefficient with binary masks"""
     pred = torch.zeros(1, 1, 8, 8)
     pred[0, 0, :4, :4] = 1.0
     
@@ -146,13 +152,13 @@ def test_dice_coefficient_binary_masks():
     
     dice = _dice_coefficient(pred, target)
     
-    # Полное совпадение
+    # Perfect match
     assert torch.allclose(dice, torch.ones(1))
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_soft_predictions():
-    """Тест Dice coefficient с мягкими предсказаниями"""
-    pred = torch.rand(2, 1, 4, 4)  # Значения в [0, 1]
+    """Test Dice coefficient with soft predictions"""
+    pred = torch.rand(2, 1, 4, 4)  # Values in [0, 1]
     target = torch.rand(2, 1, 4, 4)
     
     dice = _dice_coefficient(pred, target)
@@ -161,52 +167,52 @@ def test_dice_coefficient_soft_predictions():
     assert torch.all(dice >= 0)
 
 
-# --- Тесты для _custom_collate_fn ---
+# --- Tests for _custom_collate_fn ---
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_basic():
-    """Тест базовой функциональности _custom_collate_fn"""
-    # Создаём batch из 2 samples
+    """Test basic functionality _custom_collate_fn"""
+    # Create a batch of 2 samples
     img1 = torch.rand(3, 64, 64)
     img2 = torch.rand(3, 64, 64)
     
     target1 = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(5, 8),
+        "quads": torch.rand(5, 8),
     }
     target2 = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(3, 8),
+        "quads": torch.rand(3, 8),
     }
     
     batch = [(img1, target1), (img2, target2)]
     
     images, targets = _custom_collate_fn(batch)
     
-    # Проверяем images
+    # Check images
     assert images.shape == (2, 3, 64, 64)
     
-    # Проверяем targets
+    # Check targets
     assert "score_map" in targets
     assert "geo_map" in targets
-    assert "rboxes" in targets
+    assert "quads" in targets
     
     assert targets["score_map"].shape == (2, 1, 16, 16)
     assert targets["geo_map"].shape == (2, 8, 16, 16)
-    assert len(targets["rboxes"]) == 2
-    assert targets["rboxes"][0].shape == (5, 8)
-    assert targets["rboxes"][1].shape == (3, 8)
+    assert len(targets["quads"]) == 2
+    assert targets["quads"][0].shape == (5, 8)
+    assert targets["quads"][1].shape == (3, 8)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_single_sample():
-    """Тест _custom_collate_fn с одним sample"""
+    """Test _custom_collate_fn with single sample"""
     img = torch.rand(3, 64, 64)
     target = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(2, 8),
+        "quads": torch.rand(2, 8),
     }
     
     batch = [(img, target)]
@@ -216,11 +222,11 @@ def test_custom_collate_fn_single_sample():
     assert images.shape == (1, 3, 64, 64)
     assert targets["score_map"].shape == (1, 1, 16, 16)
     assert targets["geo_map"].shape == (1, 8, 16, 16)
-    assert len(targets["rboxes"]) == 1
+    assert len(targets["quads"]) == 1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_multiple_samples():
-    """Тест _custom_collate_fn с несколькими samples"""
+    """Test _custom_collate_fn with multiple samples"""
     batch_size = 4
     batch = []
     
@@ -229,7 +235,7 @@ def test_custom_collate_fn_multiple_samples():
         target = {
             "score_map": torch.rand(1, 32, 32),
             "geo_map": torch.rand(8, 32, 32),
-            "rboxes": torch.rand(np.random.randint(1, 10), 8),
+            "quads": torch.rand(np.random.randint(1, 10), 8),
         }
         batch.append((img, target))
     
@@ -238,16 +244,16 @@ def test_custom_collate_fn_multiple_samples():
     assert images.shape == (batch_size, 3, 128, 128)
     assert targets["score_map"].shape == (batch_size, 1, 32, 32)
     assert targets["geo_map"].shape == (batch_size, 8, 32, 32)
-    assert len(targets["rboxes"]) == batch_size
+    assert len(targets["quads"]) == batch_size
 
-@pytest.mark.skip(reason="Временно отключено")
-def test_custom_collate_fn_empty_rboxes():
-    """Тест _custom_collate_fn с пустыми rboxes"""
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
+def test_custom_collate_fn_empty_quads():
+    """Test _custom_collate_fn with empty quads"""
     img = torch.rand(3, 64, 64)
     target = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.empty(0, 8),  # Пустые boxes
+        "quads": torch.empty(0, 8),  # Empty boxes
     }
     
     batch = [(img, target)]
@@ -255,43 +261,43 @@ def test_custom_collate_fn_empty_rboxes():
     images, targets = _custom_collate_fn(batch)
     
     assert images.shape == (1, 3, 64, 64)
-    assert len(targets["rboxes"]) == 1
-    assert targets["rboxes"][0].shape == (0, 8)
+    assert len(targets["quads"]) == 1
+    assert targets["quads"][0].shape == (0, 8)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_different_rbox_counts():
-    """Тест _custom_collate_fn с разным количеством boxes"""
+    """Test _custom_collate_fn with different number of boxes"""
     img1 = torch.rand(3, 64, 64)
     target1 = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(10, 8),  # 10 boxes
+        "quads": torch.rand(10, 8),  # 10 boxes
     }
     
     img2 = torch.rand(3, 64, 64)
     target2 = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(2, 8),  # 2 boxes
+        "quads": torch.rand(2, 8),  # 2 boxes
     }
     
     batch = [(img1, target1), (img2, target2)]
     
     images, targets = _custom_collate_fn(batch)
     
-    # rboxes должны быть списком тензоров разной длины
-    assert len(targets["rboxes"]) == 2
-    assert targets["rboxes"][0].shape[0] == 10
-    assert targets["rboxes"][1].shape[0] == 2
+    # quads should be a list of tensors with different lengths
+    assert len(targets["quads"]) == 2
+    assert targets["quads"][0].shape[0] == 10
+    assert targets["quads"][1].shape[0] == 2
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_preserves_dtype():
-    """Тест что _custom_collate_fn сохраняет типы данных"""
+    """Test that _custom_collate_fn preserves data types"""
     img = torch.rand(3, 64, 64, dtype=torch.float32)
     target = {
         "score_map": torch.rand(1, 16, 16, dtype=torch.float32),
         "geo_map": torch.rand(8, 16, 16, dtype=torch.float32),
-        "rboxes": torch.rand(5, 8, dtype=torch.float32),
+        "quads": torch.rand(5, 8, dtype=torch.float32),
     }
     
     batch = [(img, target)]
@@ -302,47 +308,47 @@ def test_custom_collate_fn_preserves_dtype():
     assert targets["score_map"].dtype == torch.float32
     assert targets["geo_map"].dtype == torch.float32
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_stack_consistency():
-    """Тест консистентности stack для images и maps"""
+    """Test stack consistency for images and maps"""
     batch = []
     for i in range(3):
-        img = torch.rand(3, 64, 64) * i  # Разные значения
+        img = torch.rand(3, 64, 64) * i  # Different values
         target = {
             "score_map": torch.rand(1, 16, 16) * i,
             "geo_map": torch.rand(8, 16, 16) * i,
-            "rboxes": torch.rand(2, 8),
+            "quads": torch.rand(2, 8),
         }
         batch.append((img, target))
     
     images, targets = _custom_collate_fn(batch)
     
-    # Проверяем что stack работает правильно
+    # Check that stack works correctly
     for i in range(3):
-        # Среднее значение должно увеличиваться с i
+        # Mean value should increase with i
         if i > 0:
             assert images[i].mean() > images[0].mean()
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_different_image_channels():
-    """Тест _custom_collate_fn с разным количеством каналов"""
-    # Обычно 3 канала (RGB)
+    """Test _custom_collate_fn with different number of channels"""
+    # Usually 3 channels (RGB)
     img = torch.rand(3, 64, 64)
     target = {
         "score_map": torch.rand(1, 16, 16),
         "geo_map": torch.rand(8, 16, 16),
-        "rboxes": torch.rand(5, 8),
+        "quads": torch.rand(5, 8),
     }
     
     batch = [(img, target)]
     
     images, targets = _custom_collate_fn(batch)
     
-    assert images.shape[1] == 3  # RGB каналы
+    assert images.shape[1] == 3  # RGB channels
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_large_batch():
-    """Тест _custom_collate_fn с большим batch"""
+    """Test _custom_collate_fn with large batch"""
     batch_size = 16
     batch = []
     
@@ -351,7 +357,7 @@ def test_custom_collate_fn_large_batch():
         target = {
             "score_map": torch.rand(1, 64, 64),
             "geo_map": torch.rand(8, 64, 64),
-            "rboxes": torch.rand(5, 8),
+            "quads": torch.rand(5, 8),
         }
         batch.append((img, target))
     
@@ -360,14 +366,13 @@ def test_custom_collate_fn_large_batch():
     assert images.shape == (batch_size, 3, 256, 256)
     assert targets["score_map"].shape == (batch_size, 1, 64, 64)
     assert targets["geo_map"].shape == (batch_size, 8, 64, 64)
-    assert len(targets["rboxes"]) == batch_size
+    assert len(targets["quads"]) == batch_size
 
 
-# --- Дополнительные тесты ---
-
-@pytest.mark.skip(reason="Временно отключено")
+# --- Additional tests ---
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_edge_case_single_pixel():
-    """Тест Dice coefficient с одним активным пикселем"""
+    """Test Dice coefficient with single active pixel"""
     pred = torch.zeros(1, 1, 8, 8)
     pred[0, 0, 4, 4] = 1.0
     
@@ -376,27 +381,27 @@ def test_dice_coefficient_edge_case_single_pixel():
     
     dice = _dice_coefficient(pred, target)
     
-    # Идеальное совпадение одного пикселя
+    # Perfect match of a single pixel
     assert torch.allclose(dice, torch.ones(1))
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_asymmetric_overlap():
-    """Тест Dice coefficient с асимметричным пересечением"""
+    """Test Dice coefficient with asymmetric overlap"""
     pred = torch.zeros(1, 1, 8, 8)
-    pred[0, 0, :4, :4] = 1.0  # 16 пикселей
+    pred[0, 0, :4, :4] = 1.0  # 16 pixels
     
     target = torch.zeros(1, 1, 8, 8)
-    target[0, 0, :2, :2] = 1.0  # 4 пикселя
+    target[0, 0, :2, :2] = 1.0  # 4 pixels
     
     dice = _dice_coefficient(pred, target)
     
-    # Должно быть между 0 и 1
+    # Should be between 0 and 1
     assert 0 < dice[0] < 1
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_continuous_values():
-    """Тест Dice coefficient с непрерывными значениями"""
-    pred = torch.rand(3, 1, 16, 16) * 0.8 + 0.1  # В диапазоне [0.1, 0.9]
+    """Test Dice coefficient with continuous values"""
+    pred = torch.rand(3, 1, 16, 16) * 0.8 + 0.1  # In the range [0.1, 0.9]
     target = torch.rand(3, 1, 16, 16) * 0.8 + 0.1
     
     dice = _dice_coefficient(pred, target)
@@ -405,9 +410,9 @@ def test_dice_coefficient_continuous_values():
     assert torch.all(dice >= 0)
     assert torch.all(dice <= 1)
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_maintains_rbox_structure():
-    """Тест что _custom_collate_fn сохраняет структуру rboxes"""
+    """Test что _custom_collate_fn maintains structure quads"""
     batch = []
     expected_shapes = [(7, 8), (3, 8), (5, 8)]
     
@@ -416,40 +421,40 @@ def test_custom_collate_fn_maintains_rbox_structure():
         target = {
             "score_map": torch.rand(1, 16, 16),
             "geo_map": torch.rand(8, 16, 16),
-            "rboxes": torch.rand(*shape),
+            "quads": torch.rand(*shape),
         }
         batch.append((img, target))
     
     images, targets = _custom_collate_fn(batch)
     
     for i, expected_shape in enumerate(expected_shapes):
-        assert targets["rboxes"][i].shape == expected_shape
+        assert targets["quads"][i].shape == expected_shape
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_dice_coefficient_high_precision():
-    """Тест Dice coefficient с высокой точностью"""
-    # Создаём почти идентичные тензоры
+    """Test Dice coefficient with high precision"""
+    # Create nearly identical tensors
     pred = torch.ones(2, 1, 4, 4)
     target = torch.ones(2, 1, 4, 4) * 0.9999
     
     dice = _dice_coefficient(pred, target)
     
-    # Dice должен быть очень близок к 1
+    # Dice should be very close to 1
     assert dice[0] > 0.99
 
-@pytest.mark.skip(reason="Временно отключено")
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_custom_collate_fn_geo_map_channels():
-    """Тест что _custom_collate_fn правильно обрабатывает 8 каналов geo_map"""
+    """Test that _custom_collate_fn correctly processes 8 channels geo_map"""
     img = torch.rand(3, 64, 64)
     target = {
         "score_map": torch.rand(1, 16, 16),
-        "geo_map": torch.rand(8, 16, 16),  # 8 каналов для QUAD offsets
-        "rboxes": torch.rand(5, 8),
+        "geo_map": torch.rand(8, 16, 16),  # 8 channels for QUAD offsets
+        "quads": torch.rand(5, 8),
     }
     
     batch = [(img, target)]
     
     images, targets = _custom_collate_fn(batch)
     
-    # geo_map должен иметь 8 каналов
+    # geo_map should have 8 channels
     assert targets["geo_map"].shape[1] == 8
