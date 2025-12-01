@@ -74,7 +74,7 @@ def predict(
 ### Минимальный детектор
 
 ```python
-from manuscript.detectors._types import Word, Block, Page
+from manuscript.data import Word, Block, Page
 
 class MyDetector:
     def predict(self, image, vis=False, profile=False):

@@ -9,7 +9,7 @@ from PIL import Image
 from typing import List, Tuple, Union, Dict, Any
 
 from manuscript import Pipeline
-from manuscript.detectors._types import Word, Block, Page
+from manuscript.data import Word, Block, Page
 
 
 class DummyDetector:

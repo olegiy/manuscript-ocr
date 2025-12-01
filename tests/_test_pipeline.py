@@ -9,7 +9,7 @@ from unittest.mock import Mock, MagicMock
 
 from manuscript import OCRPipeline
 from manuscript.detectors import EAST
-from manuscript.detectors._types import Page, Block, Word
+from manuscript.data import Page, Block, Word
 from manuscript.recognizers import TRBA
 
 
@@ -136,7 +136,7 @@ class TestOCRPipeline:
     def test_process_no_text_detected(self, pipeline, test_image):
         """Тест случая когда текст не найден"""
         # Настраиваем детектор для возврата пустого результата
-        from manuscript.detectors._types import Page
+        from manuscript.data import Page
 
         empty_page = Page(blocks=[])
         pipeline.detector.predict.return_value = {
@@ -155,7 +155,7 @@ class TestOCRPipeline:
 
     def test_get_text_from_empty_page(self, pipeline, test_image):
         """Тест извлечения текста из пустой страницы"""
-        from manuscript.detectors._types import Page
+        from manuscript.data import Page
 
         empty_page = Page(blocks=[])
 

@@ -1,9 +1,9 @@
 import numpy as np
 from pathlib import Path
 
-import manuscript.detectors._east.infer as infer
+import manuscript.detectors._east as east_module
 from manuscript.detectors import EAST
-from manuscript.detectors._types import Word, Block, Page
+from manuscript.data import Word, Block, Page
 
 
 def _make_page(text: str) -> Page:
@@ -33,8 +33,8 @@ def test_detector_doc_single_image(monkeypatch):
             "geo_map": None,
         }
 
-    monkeypatch.setattr(infer.EAST, "__init__", fake_init, raising=False)
-    monkeypatch.setattr(infer.EAST, "predict", fake_predict, raising=False)
+    monkeypatch.setattr(east_module.EAST, "__init__", fake_init, raising=False)
+    monkeypatch.setattr(east_module.EAST, "predict", fake_predict, raising=False)
 
     detector = EAST(score_thresh=0.75)
     result = detector.predict("data/samples/page_001.jpg", vis=True)
@@ -67,8 +67,8 @@ def test_detector_doc_folder_processing(monkeypatch, tmp_path):
             "geo_map": None,
         }
 
-    monkeypatch.setattr(infer.EAST, "__init__", fake_init, raising=False)
-    monkeypatch.setattr(infer.EAST, "predict", fake_predict, raising=False)
+    monkeypatch.setattr(east_module.EAST, "__init__", fake_init, raising=False)
+    monkeypatch.setattr(east_module.EAST, "predict", fake_predict, raising=False)
 
     detector = EAST(score_thresh=0.6)
     texts = {}
@@ -100,8 +100,8 @@ def test_detector_doc_custom_weights(monkeypatch, tmp_path):
             "geo_map": geo_map,
         }
 
-    monkeypatch.setattr(infer.EAST, "__init__", fake_init, raising=False)
-    monkeypatch.setattr(infer.EAST, "predict", fake_predict, raising=False)
+    monkeypatch.setattr(east_module.EAST, "__init__", fake_init, raising=False)
+    monkeypatch.setattr(east_module.EAST, "predict", fake_predict, raising=False)
 
     detector = EAST(
         weights_path=weights_path,
@@ -127,7 +127,7 @@ def test_detector_doc_training(monkeypatch, tmp_path):
         return "best-model-path"
 
     monkeypatch.setattr(
-        infer.EAST, "train", staticmethod(fake_train), raising=False
+        east_module.EAST, "train", staticmethod(fake_train), raising=False
     )
 
     train_images = [
@@ -162,3 +162,4 @@ def test_detector_doc_training(monkeypatch, tmp_path):
     assert captured["kwargs"]["val_anns"] == val_anns
     assert captured["kwargs"]["experiment_root"] == "./experiments"
     assert captured["kwargs"]["model_name"] == "east_doc_example"
+

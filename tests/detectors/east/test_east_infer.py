@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch, MagicMock
 import tempfile
 
 from manuscript.detectors import EAST
-from manuscript.detectors._types import Page, Block, Word
+from manuscript.data import Page, Block, Word
 
 
 class TestEASTInitialization:
