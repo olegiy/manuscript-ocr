@@ -85,7 +85,7 @@ def _run_training(
         "use_focal_geo": use_focal_geo,
         "focal_gamma": focal_gamma if use_focal_geo else None,
         "val_interval": val_interval,
-        "scheduler": "CosineAnnealingLR",
+        "scheduler": "CosineAnnealingWarmRestarts",
         "optimizer": "SAM" if use_sam else ("Lookahead(RAdam)" if use_lookahead else "RAdam"),
         "train_dataset_size": len(train_dataset),
         "val_dataset_size": len(val_dataset),
@@ -177,9 +177,10 @@ def _run_training(
         if not hasattr(optimizer, attr):
             setattr(optimizer, attr, OrderedDict())
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        T_max=num_epochs,
+        T_0=10,
+        T_mult=1,
         eta_min=lr / 100,
     )
     try:

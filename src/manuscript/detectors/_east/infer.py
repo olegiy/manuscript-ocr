@@ -764,7 +764,7 @@ class EAST:
     def export_to_onnx(
         weights_path: Union[str, Path],
         output_path: Union[str, Path],
-        backbone_name: str = "resnet50",
+        backbone_name: str = None,
         input_size: int = 1280,
         opset_version: int = 14,
         simplify: bool = True,
@@ -783,8 +783,9 @@ class EAST:
         output_path : str or Path
             Path where the ONNX model will be saved (.onnx).
         backbone_name : {"resnet50", "resnet101"}, optional
-            Backbone architecture of the model. Must match the architecture
-            used during training. Default is ``"resnet50"``.
+            Backbone architecture of the model. If None, will be automatically
+            detected from the checkpoint. Must match the architecture used during
+            training. Default is None (auto-detect).
         input_size : int, optional
             Input image size (height and width). The model will accept
             images of shape ``(batch, 3, input_size, input_size)``.
@@ -807,6 +808,8 @@ class EAST:
             If required packages (torch, onnx) are not installed.
         FileNotFoundError
             If ``weights_path`` does not exist.
+        ValueError
+            If backbone_name doesn't match the checkpoint architecture.
 
         Notes
         -----
@@ -818,24 +821,31 @@ class EAST:
         The model supports dynamic batch size and image dimensions through
         dynamic axes configuration.
 
+        **Automatic Backbone Detection:**
+        
+        The method automatically detects the backbone architecture from the checkpoint
+        by analyzing the number of parameters in layer4. This prevents mismatches between
+        checkpoint and architecture that could lead to incorrect exports.
+
         Examples
         --------
-        Export default EAST model to ONNX:
+        Export with automatic backbone detection:
 
         >>> from manuscript.detectors import EAST
         >>> EAST.export_to_onnx(
         ...     weights_path="east_resnet50.pth",
         ...     output_path="east_model.onnx"
         ... )
+        Auto-detected backbone: resnet50
         Exporting to ONNX (opset 14)...
         [OK] ONNX model saved to: east_model.onnx
-        [OK] ONNX model is valid
 
-        Export with custom input size:
+        Export with explicit backbone:
 
         >>> EAST.export_to_onnx(
         ...     weights_path="custom_weights.pth",
         ...     output_path="custom_model.onnx",
+        ...     backbone_name="resnet101",
         ...     input_size=1024,
         ...     simplify=False
         ... )
@@ -867,7 +877,49 @@ class EAST:
         if not weights_path.exists():
             raise FileNotFoundError(f"Weights file not found: {weights_path}")
 
-        print(f"Loading PyTorch model from {weights_path}...")
+        print(f"Loading checkpoint from {weights_path}...")
+        checkpoint = torch.load(str(weights_path), map_location="cpu")
+        
+        # Auto-detect backbone if not specified
+        if backbone_name is None:
+            print("Auto-detecting backbone architecture...")
+            # Detect by checking layer3 parameters count
+            # ResNet50: layer3 has 6 bottleneck blocks (layer3.0 - layer3.5)
+            # ResNet101: layer3 has 23 bottleneck blocks (layer3.0 - layer3.22)
+            
+            # Count backbone.extractor.* parameters starting with "layer3"
+            layer3_keys = [k for k in checkpoint.keys() if "backbone.extractor.layer3" in k]
+            
+            # Check if layer3.10 exists (only in resnet101)
+            has_layer3_10 = any("layer3.10" in k for k in layer3_keys)
+            
+            if has_layer3_10:
+                detected_backbone = "resnet101"
+            else:
+                detected_backbone = "resnet50"
+            
+            print(f"   Detected {len(layer3_keys)} layer3 parameters")
+            print(f"   Auto-detected backbone: {detected_backbone}")
+            backbone_name = detected_backbone
+        else:
+            print(f"Using specified backbone: {backbone_name}")
+            
+            # Verify backbone matches checkpoint
+            print("Verifying backbone matches checkpoint...")
+            layer3_keys = [k for k in checkpoint.keys() if "backbone.extractor.layer3" in k]
+            has_layer3_10 = any("layer3.10" in k for k in layer3_keys)
+            
+            expected_backbone = "resnet101" if has_layer3_10 else "resnet50"
+            
+            if expected_backbone != backbone_name:
+                raise ValueError(
+                    f"Backbone mismatch! Checkpoint is {expected_backbone}, "
+                    f"but you specified {backbone_name}. "
+                    f"Either use backbone_name='{expected_backbone}' or set backbone_name=None for auto-detection."
+                )
+            print(f"   [OK] Backbone matches checkpoint ({backbone_name})")
+
+        print(f"\nLoading PyTorch model...")
         east_model = EASTModel(
             backbone_name=backbone_name,
             pretrained_backbone=False,
@@ -927,5 +979,56 @@ class EAST:
             else:
                 print("[WARNING] Simplification failed, using original model")
 
+        # Test ONNX inference and compare with PyTorch
+        try:
+            import onnxruntime as ort
+            
+            print(f"\nTesting ONNX inference...")
+            session = ort.InferenceSession(
+                str(output_path),
+                providers=["CPUExecutionProvider"]
+            )
+
+            ort_inputs = {"input": dummy_input.numpy()}
+            ort_outputs = session.run(None, ort_inputs)
+
+            print(f"[OK] ONNX inference works!")
+            print(f"  ONNX score_map shape: {ort_outputs[0].shape}")
+            print(f"  ONNX geo_map shape: {ort_outputs[1].shape}")
+
+            # Compare with PyTorch
+            print(f"\nComparing ONNX vs PyTorch outputs...")
+            torch_score = score_map.numpy()
+            torch_geo = geo_map.numpy()
+            onnx_score = ort_outputs[0]
+            onnx_geo = ort_outputs[1]
+
+            score_max_diff = abs(torch_score - onnx_score).max()
+            geo_max_diff = abs(torch_geo - onnx_geo).max()
+            
+            print(f"  Max difference in score_map: {score_max_diff:.6f}")
+            print(f"  Max difference in geo_map: {geo_max_diff:.6f}")
+
+            if score_max_diff < 1e-4 and geo_max_diff < 1e-4:
+                print(f"  [OK] Outputs match!")
+            elif score_max_diff < 1e-3 and geo_max_diff < 1e-3:
+                print(f"  [WARNING] Small differences detected (acceptable)")
+            else:
+                print(f"  [ERROR] Outputs differ significantly!")
+                print(f"  This may indicate a problem with the export.")
+
+        except ImportError:
+            print(f"[WARNING] onnxruntime not installed, skipping inference test")
+            print(f"  Install with: pip install onnxruntime")
+        except Exception as e:
+            print(f"[WARNING] ONNX inference test failed: {e}")
+
         file_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
         print(f"\n[OK] Export complete! Model size: {file_size_mb:.1f} MB")
+        print(f"\n=== Summary ===")
+        print(f"Backbone: {backbone_name}")
+        print(f"Input shape: [batch_size, 3, {input_size}, {input_size}]")
+        print(f"Output shapes:")
+        print(f"  - score_map: [batch_size, 1, H, W]")
+        print(f"  - geo_map: [batch_size, 8, H, W]")
+
