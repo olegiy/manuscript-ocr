@@ -19,22 +19,34 @@ class Word(BaseModel):
     )
     order: Optional[int] = Field(
         None,
-        description="Reading-order position assigned after sorting. None before sorting; list order remains authoritative."
+        description="Word position inside the line after sorting. None before sorting."
     )
+
+
+class Line(BaseModel):
+    """
+    A single text line containing one or more words.
+    """
+    words: List[Word]
+    order: Optional[int] = Field(
+        None,
+        description="Line position inside a block or page after sorting. None before sorting."
+    )
+
 
 class Block(BaseModel):
     """
-    A text block, which may consist of several words (Word).
+    A logical text block (e.g., paragraph, column).
     """
-    words: List[Word]
+    lines: List[Line]
     order: Optional[int] = Field(
         None,
         description="Block reading-order position after sorting. None before sorting."
     )
 
+
 class Page(BaseModel):
     """
-    A document page containing one or multiple text blocks.
+    A document page containing blocks of text.
     """
-
     blocks: List[Block]
