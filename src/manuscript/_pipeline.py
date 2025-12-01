@@ -5,13 +5,13 @@ import cv2
 from pathlib import Path
 import time
 from typing import List, Tuple
-from .detectors import (
-    EAST,
+from .detectors import EAST
+from .recognizers import TRBA
+from .utils import (
     visualize_page,
     read_image,
     sort_boxes_reading_order_with_resolutions,
 )
-from .recognizers import TRBA
 
 
 class Pipeline:

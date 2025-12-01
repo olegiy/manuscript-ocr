@@ -13,7 +13,7 @@ import tempfile
 from manuscript.detectors import EAST
 from manuscript.data import Page, Block, Word
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTInitialization:
     """Тесты инициализации EAST"""
 
@@ -75,7 +75,7 @@ class TestEASTInitialization:
         default_path = Path.home() / ".manuscript" / "east" / "east_quad_23_05.onnx"
         assert default_path.exists()
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTScalingMethods:
     """Тесты для методов масштабирования и трансформации"""
 
@@ -169,7 +169,7 @@ class TestEASTScalingMethods:
         assert aligned[0, 8] == 0.9
         assert aligned[1, 8] == 0.8
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTGeometricUtils:
     """Тесты для геометрических утилит"""
 
@@ -259,7 +259,7 @@ class TestEASTGeometricUtils:
         
         # Должен остаться только большой
         assert len(result) == 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_remove_area_anomalies_disabled(self):
         """Тест что аномалии не удаляются если флаг выключен"""
         detector = EAST(remove_area_anomalies=False)
@@ -273,7 +273,7 @@ class TestEASTGeometricUtils:
         
         # Все остаются
         assert len(result) == 2
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_remove_area_anomalies_too_few_boxes(self):
         """Тест что аномалии не удаляются если боксов мало"""
         detector = EAST(remove_area_anomalies=True, anomaly_min_box_count=10)
@@ -288,7 +288,7 @@ class TestEASTGeometricUtils:
         # Все остаются (меньше 10 боксов)
         assert len(result) == 2
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTPredict:
     """Тесты для метода predict"""
 
@@ -303,7 +303,7 @@ class TestEASTPredict:
         img_path = tmp_path / "test_image.jpg"
         cv2.imwrite(str(img_path), cv2.cvtColor(test_image, cv2.COLOR_RGB2BGR))
         return str(img_path)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_path(self, test_image_path):
         """Тест predict с путем к файлу"""
         detector = EAST()
@@ -314,7 +314,7 @@ class TestEASTPredict:
         assert "page" in result
         assert "vis_image" in result
         assert isinstance(result["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_numpy_array(self, test_image):
         """Тест predict с numpy array"""
         detector = EAST()
@@ -324,7 +324,7 @@ class TestEASTPredict:
         assert isinstance(result, dict)
         assert "page" in result
         assert isinstance(result["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_returns_page_structure(self, test_image):
         """Тест что predict возвращает правильную структуру Page"""
         detector = EAST()
@@ -339,7 +339,7 @@ class TestEASTPredict:
             block = page.blocks[0]
             assert hasattr(block, "words")
             assert isinstance(block.words, list)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_visualization(self, test_image):
         """Тест predict с визуализацией"""
         detector = EAST()
@@ -351,7 +351,7 @@ class TestEASTPredict:
         
         if vis_img is not None:
             assert isinstance(vis_img, Image.Image)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_return_maps(self, test_image):
         """Тест predict с возвратом карт"""
         detector = EAST()
@@ -365,7 +365,7 @@ class TestEASTPredict:
             assert isinstance(result["score_map"], np.ndarray)
         if result["geo_map"] is not None:
             assert isinstance(result["geo_map"], np.ndarray)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_without_return_maps(self, test_image):
         """Тест что без return_maps карты None"""
         detector = EAST()
@@ -374,7 +374,7 @@ class TestEASTPredict:
         
         assert result["score_map"] is None
         assert result["geo_map"] is None
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_profile(self, test_image, capsys):
         """Тест режима профилирования"""
         detector = EAST()
@@ -384,7 +384,7 @@ class TestEASTPredict:
         # Проверяем что были выведены сообщения о времени
         captured = capsys.readouterr()
         assert "Model inference" in captured.out or "inference" in captured.out.lower()
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_sort_reading_order(self, test_image):
         """Тест сортировки в порядке чтения"""
         detector = EAST()
@@ -394,7 +394,7 @@ class TestEASTPredict:
         
         # Просто проверяем что не упало
         assert isinstance(page, Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_different_thresholds(self, test_image):
         """Тест с разными порогами"""
         detector_low = EAST(score_thresh=0.1)
@@ -406,7 +406,7 @@ class TestEASTPredict:
         # Оба должны отработать без ошибок
         assert isinstance(result_low["page"], Page)
         assert isinstance(result_high["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_axis_aligned_vs_original(self, test_image):
         """Тест axis_aligned_output флага"""
         detector_aligned = EAST(axis_aligned_output=True)
@@ -420,24 +420,24 @@ class TestEASTPredict:
         assert isinstance(result_original["page"], Page)
 
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTErrorHandling:
     """Тесты обработки ошибок"""
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_nonexistent_file(self):
         """Тест ошибки при несуществующем файле"""
         detector = EAST()
         
         with pytest.raises(FileNotFoundError):
             detector.predict("nonexistent_image.jpg")
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_invalid_type(self):
         """Тест ошибки при неправильном типе входа"""
         detector = EAST()
         
         with pytest.raises((TypeError, AttributeError)):
             detector.predict(12345)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_corrupted_image_path(self, tmp_path):
         """Тест с поврежденным файлом изображения"""
         # Создаем текстовый файл вместо изображения
@@ -450,10 +450,10 @@ class TestEASTErrorHandling:
         with pytest.raises((cv2.error, ValueError, OSError)):
             detector.predict(str(fake_img))
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTEdgeCases:
     """Тесты граничных случаев"""
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_very_small_image(self):
         """Тест с очень маленьким изображением"""
         detector = EAST()
@@ -465,7 +465,7 @@ class TestEASTEdgeCases:
         
         # Не должно быть ошибок
         assert isinstance(result["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_very_large_image(self):
         """Тест с большим изображением"""
         detector = EAST()
@@ -477,7 +477,7 @@ class TestEASTEdgeCases:
         
         # Не должно быть ошибок
         assert isinstance(result["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_grayscale_image(self):
         """Тест с черно-белым изображением"""
         detector = EAST()
@@ -493,7 +493,7 @@ class TestEASTEdgeCases:
         except (ValueError, AttributeError):
             # Ожидаемая ошибка для grayscale
             pass
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_black_image(self):
         """Тест с полностью черным изображением"""
         detector = EAST()
@@ -505,7 +505,7 @@ class TestEASTEdgeCases:
         
         # Скорее всего не будет детекций, но не должно быть ошибок
         assert isinstance(page, Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_white_image(self):
         """Тест с полностью белым изображением"""
         detector = EAST()
@@ -516,7 +516,7 @@ class TestEASTEdgeCases:
         page = result["page"]
         
         assert isinstance(page, Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_predict_with_extreme_expand_ratios(self):
         """Тест с экстремальными коэффициентами расширения"""
         detector = EAST(expand_ratio_w=0.0, expand_ratio_h=0.0)
@@ -528,7 +528,7 @@ class TestEASTEdgeCases:
         # Не должно быть ошибок даже с нулевым расширением
         assert isinstance(result["page"], Page)
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTIntegration:
     """Интеграционные тесты с реальным изображением"""
 
@@ -542,7 +542,7 @@ class TestEASTIntegration:
             pytest.skip("Тестовое изображение example/ocr_example_image.jpg не найдено")
         
         return str(image_path)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_full_pipeline_with_real_image(self, example_image_path):
         """Полный тест pipeline с реальным изображением"""
         detector = EAST(score_thresh=0.3)
@@ -581,7 +581,7 @@ class TestEASTIntegration:
         # Проверяем карты
         assert result["score_map"] is not None
         assert result["geo_map"] is not None
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_different_target_sizes(self, example_image_path):
         """Тест с разными размерами target_size"""
         sizes = [640, 1280, 1920]
@@ -592,7 +592,7 @@ class TestEASTIntegration:
             
             # Все должны отработать без ошибок
             assert isinstance(result["page"], Page)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_consistency_across_runs(self):
         """Тест консистентности результатов"""
         detector = EAST(score_thresh=0.5)

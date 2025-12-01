@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import ConcatDataset
 
 from ...data import Block, Page, Word
+from ...utils import read_image, visualize_page, sort_boxes_reading_order_with_resolutions
 from .dataset import EASTDataset
 from .east import EASTModel
 from .lanms import locality_aware_nms
@@ -18,9 +19,6 @@ from .train_utils import _run_training
 from .utils import (
     decode_quads_from_maps,
     expand_boxes,
-    read_image,
-    sort_boxes_reading_order_with_resolutions,
-    visualize_page,
 )
 
 

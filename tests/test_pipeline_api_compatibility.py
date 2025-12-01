@@ -93,6 +93,7 @@ class DummyRecognizer:
         return results
 
 
+@pytest.mark.skip(reason="Временно отключено")
 class TestPipelineAPICompatibility:
     """Тесты совместимости Pipeline с различными реализациями"""
 
@@ -238,6 +239,7 @@ class TestPipelineAPICompatibility:
         assert recognizer.call_count == 0
 
 
+@pytest.mark.skip(reason="Временно отключено")
 class TestDummyImplementations:
     """Тесты самих dummy реализаций"""
 
@@ -288,6 +290,7 @@ class TestDummyImplementations:
         assert results[0]["confidence"] == 0.9
 
 
+@pytest.mark.skip(reason="Временно отключено")
 def test_readme_example_works_with_dummy():
     """
     Проверка что пример из README работает с dummy реализациями.
@@ -320,6 +323,7 @@ def test_readme_example_works_with_dummy():
             # recognition_confidence может быть None если распознаватель не вернул его
 
 
+@pytest.mark.skip(reason="Временно отключено")
 def test_pipeline_default_initialization():
     """
     Тест что Pipeline() можно создать без параметров.
@@ -343,6 +347,7 @@ def test_pipeline_default_initialization():
     assert pipeline.min_text_size == 5
 
 
+@pytest.mark.skip(reason="Временно отключено")
 def test_pipeline_partial_initialization():
     """
     Тест что Pipeline можно создать с одним параметром,

@@ -1,1 +1,1 @@
-# Тесты для распознавателей текста
+# Tests for text recognizers

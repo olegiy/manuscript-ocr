@@ -10,8 +10,6 @@ import torch
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 
-from .utils import quad_to_rbox
-
 
 def order_vertices_clockwise(poly):
     poly = np.array(poly).reshape(-1, 2)
@@ -160,19 +158,20 @@ class EASTDataset(Dataset):
                 pts_scaled[:, 0] *= scale_x
                 pts_scaled[:, 1] *= scale_y
 
+        # Convert quads to the format expected by visualization (N, 8)
         if quads:
-            rboxes = np.stack(
-                [quad_to_rbox(q.flatten()) for q in quads], axis=0
+            quads_array = np.stack(
+                [q.flatten() for q in quads], axis=0
             ).astype(np.float32)
         else:
-            rboxes = np.zeros((0, 5), dtype=np.float32)
+            quads_array = np.zeros((0, 8), dtype=np.float32)
 
         score_map, geo_map = self.compute_quad_maps(quads)
         img_tensor = self.transform(img_resized)
         target = {
             "score_map": torch.tensor(score_map).unsqueeze(0),
             "geo_map": torch.tensor(geo_map),
-            "rboxes": torch.from_numpy(rboxes),
+            "quads": torch.from_numpy(quads_array),
         }
         return img_tensor, target
 

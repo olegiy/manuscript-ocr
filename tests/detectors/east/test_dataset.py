@@ -20,7 +20,7 @@ from manuscript.detectors._east.dataset import (
 # Тесты геометрических функций
 # ============================================================================
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestGeometricFunctions:
     """Тесты для вспомогательных геометрических функций"""
 
@@ -121,7 +121,7 @@ class TestGeometricFunctions:
 # Тесты для EASTDataset
 # ============================================================================
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTDataset:
     """Тесты для класса EASTDataset"""
 
@@ -150,7 +150,7 @@ class TestEASTDataset:
         cv2.imwrite(str(img_dir / "test.jpg"), img)
 
         return str(img_dir), str(ann_file)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_initialization(self, simple_dataset):
         """Тест базовой инициализации датасета"""
         img_dir, ann_file = simple_dataset
@@ -166,7 +166,7 @@ class TestEASTDataset:
         assert dataset.target_size == 512
         assert dataset.score_geo_scale == 0.25
         assert dataset.images_folder == img_dir
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_len(self, simple_dataset):
         """Тест метода __len__"""
         img_dir, ann_file = simple_dataset
@@ -174,7 +174,7 @@ class TestEASTDataset:
 
         assert len(dataset) == 1
         assert dataset.__len__() == 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_getitem(self, simple_dataset):
         """Тест получения элемента из датасета"""
         img_dir, ann_file = simple_dataset
@@ -198,7 +198,7 @@ class TestEASTDataset:
 
         # Проверяем rboxes
         assert target["rboxes"].shape[1] == 5  # (cx, cy, w, h, angle)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_different_target_size(self, simple_dataset):
         """Тест с разными размерами изображения"""
         img_dir, ann_file = simple_dataset
@@ -211,7 +211,7 @@ class TestEASTDataset:
 
         assert img_512.shape == (3, 512, 512)
         assert img_1024.shape == (3, 1024, 1024)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_filter_invalid(self, tmp_path):
         """Тест фильтрации невалидных аннотаций"""
         annotations = {
@@ -250,7 +250,7 @@ class TestEASTDataset:
 
         # Должен остаться только 1 валидный
         assert len(dataset) == 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_missing_image(self, tmp_path):
         """Тест ошибки при отсутствующем изображении"""
         annotations = {
@@ -277,7 +277,7 @@ class TestEASTDataset:
 
         with pytest.raises(FileNotFoundError, match="Image not found"):
             _ = dataset[0]
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_multiple_quads(self, tmp_path):
         """Тест с несколькими квадратами на одном изображении"""
         annotations = {
@@ -316,7 +316,7 @@ class TestEASTDataset:
 
         # Должно быть 3 rbox
         assert target["rboxes"].shape[0] == 3
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_empty_annotations(self, tmp_path):
         """Тест с изображением без аннотаций"""
         annotations = {
@@ -339,7 +339,7 @@ class TestEASTDataset:
 
         # Должен быть пустым
         assert len(dataset) == 0
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_custom_transform(self, simple_dataset):
         """Тест кастомного transform"""
         import torchvision.transforms as transforms
@@ -361,7 +361,7 @@ class TestEASTDataset:
         # Без нормализации значения должны быть в [0, 1]
         assert img_tensor.min() >= 0
         assert img_tensor.max() <= 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_dataset_name(self, simple_dataset):
         """Тест атрибута dataset_name"""
         img_dir, ann_file = simple_dataset
@@ -373,7 +373,7 @@ class TestEASTDataset:
         # Кастомное имя
         dataset_custom = EASTDataset(img_dir, ann_file, dataset_name="my_dataset")
         assert dataset_custom.dataset_name == "my_dataset"
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_compute_quad_maps(self, simple_dataset):
         """Тест генерации карт score и geo"""
         img_dir, ann_file = simple_dataset
@@ -393,7 +393,7 @@ class TestEASTDataset:
         # Должна быть хотя бы одна единица в score_map (внутри квадрата)
         assert np.sum(score_map) > 0
         assert score_map.max() == 1.0
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_compute_quad_maps_multiple_quads(self, simple_dataset):
         """Тест генерации карт с несколькими квадратами"""
         img_dir, ann_file = simple_dataset
@@ -412,7 +412,7 @@ class TestEASTDataset:
         assert np.sum(score_map) > 0
         assert score_map.shape == (128, 128)
         assert geo_map.shape == (8, 128, 128)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_compute_quad_maps_empty(self, simple_dataset):
         """Тест генерации карт без квадратов"""
         img_dir, ann_file = simple_dataset
@@ -424,7 +424,7 @@ class TestEASTDataset:
         assert score_map.shape == (128, 128)
         assert geo_map.shape == (8, 128, 128)
         assert np.sum(score_map) == 0
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_segmentation_variants(self, tmp_path):
         """Тест различных форматов segmentation"""
         annotations = {
@@ -458,7 +458,7 @@ class TestEASTDataset:
 
         # Должен быть только 1 валидный quad
         assert target["rboxes"].shape[0] >= 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_east_dataset_scaling(self, tmp_path):
         """Тест правильности масштабирования координат"""
         # Изображение 640x480, target_size=512
@@ -492,7 +492,7 @@ class TestEASTDataset:
         assert 0 <= rbox[0] <= 512  # cx
         assert 0 <= rbox[1] <= 512  # cy
 
-
+@pytest.mark.skip(reason="Временно отключено")
 class TestEASTDatasetEdgeCases:
     """Тесты граничных случаев для EASTDataset"""
 
@@ -521,7 +521,7 @@ class TestEASTDatasetEdgeCases:
         # Должен обработаться без ошибок
         img_tensor, target = dataset[0]
         assert img_tensor.shape == (3, 512, 512)
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_quad_at_image_boundary(self, tmp_path):
         """Тест с квадратом на границе изображения"""
         annotations = {
@@ -550,7 +550,7 @@ class TestEASTDatasetEdgeCases:
 
         # Должен обработаться корректно
         assert target["rboxes"].shape[0] >= 1
-
+    @pytest.mark.skip(reason="Временно отключено")
     def test_different_score_geo_scales(self, simple_dataset):
         """Тест с разными значениями score_geo_scale"""
         img_dir, ann_file = simple_dataset

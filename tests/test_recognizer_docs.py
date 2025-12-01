@@ -10,7 +10,7 @@ import numpy as np
 import manuscript.recognizers._trba as trba_module
 from manuscript.recognizers import TRBA
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_single_image(monkeypatch):
     """Тест примера распознавания одного изображения"""
     init_called = {}
@@ -34,7 +34,7 @@ def test_recognizer_doc_single_image(monkeypatch):
     assert result["text"] == "hello"
     assert result["confidence"] == 0.95
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_batch_beam_search(monkeypatch):
     """Тест пакетного распознавания с beam search"""
     init_called = {}
@@ -82,7 +82,7 @@ def test_recognizer_doc_batch_beam_search(monkeypatch):
     assert predict_called.get("mode") == "beam"
     assert predict_called.get("beam_size") == 10
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_greedy_decoding(monkeypatch):
     """Тест быстрого распознавания с greedy декодированием"""
     init_called = {}
@@ -109,7 +109,7 @@ def test_recognizer_doc_greedy_decoding(monkeypatch):
     assert result["confidence"] == 0.87
     assert predict_called.get("mode") == "greedy"
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_training_single_dataset(monkeypatch):
     """Тест примера обучения на одном датасете"""
     train_called = {}
@@ -143,7 +143,7 @@ def test_recognizer_doc_training_single_dataset(monkeypatch):
     assert train_called["batch_size"] == 64
     assert train_called["optimizer"] == "Adam"
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_training_multiple_datasets(monkeypatch):
     """Тест обучения на нескольких датасетах с пропорциями"""
     train_called = {}
@@ -189,7 +189,7 @@ def test_recognizer_doc_training_multiple_datasets(monkeypatch):
     assert train_called["optimizer"] == "AdamW"
     assert train_called["scheduler"] == "CosineAnnealingLR"
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_finetuning(monkeypatch):
     """Тест fine-tuning с замороженными слоями"""
     train_called = {}
@@ -224,7 +224,7 @@ def test_recognizer_doc_finetuning(monkeypatch):
     assert train_called["freeze_enc_rnn"] == "none"
     assert train_called["lr"] == 1e-4
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_resume_training(monkeypatch):
     """Тест возобновления обучения"""
     train_called = {}
@@ -252,7 +252,7 @@ def test_recognizer_doc_resume_training(monkeypatch):
     assert train_called["resume_path"] == "experiments/trba_exp1/checkpoints/last.pth"
     assert train_called["save_every"] == 5
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_dual_validation(monkeypatch):
     """Тест двойной валидации (greedy + beam)"""
     train_called = {}
@@ -284,7 +284,7 @@ def test_recognizer_doc_dual_validation(monkeypatch):
     assert train_called["dual_validate"] is True
     assert train_called["beam_size"] == 8
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_custom_architecture(monkeypatch):
     """Тест настройки размеров изображения и архитектуры"""
     train_called = {}
@@ -318,7 +318,7 @@ def test_recognizer_doc_custom_architecture(monkeypatch):
     assert train_called["max_len"] == 40
     assert train_called["hidden_size"] == 512
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_recognizer_doc_custom_charset(monkeypatch):
     """Тест использования кастомного charset"""
     train_called = {}

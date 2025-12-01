@@ -8,6 +8,9 @@ import numpy as np
 import torch
 from albumentations.pytorch import ToTensorV2
 
+# Import unified read_image from common utils
+from ....utils import read_image
+
 
 def build_file_index(roots, exts={".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}):
     """Построение индекса файлов для быстрого поиска."""
@@ -27,13 +30,14 @@ def build_file_index(roots, exts={".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tif
 
 
 def imread_cv2(path: str):
-    """Чтение изображения через OpenCV с поддержкой Unicode путей."""
-    data = np.fromfile(path, dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if img is None:
-        raise FileNotFoundError(f"Failed to read image: {path}")
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return img
+    """
+    Чтение изображения через OpenCV с поддержкой Unicode путей.
+    
+    .. deprecated:: 
+        Use :func:`manuscript.utils.read_image` instead. This function
+        is kept for backwards compatibility and simply calls read_image.
+    """
+    return read_image(path)
 
 
 def load_charset(charset_path: str):

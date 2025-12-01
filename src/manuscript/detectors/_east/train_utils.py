@@ -504,8 +504,8 @@ def _custom_collate_fn(batch):
     images = torch.stack(images, dim=0)
     score_maps = torch.stack([t["score_map"] for t in targets], dim=0)
     geo_maps = torch.stack([t["geo_map"] for t in targets], dim=0)
-    rboxes_list = [t["rboxes"] for t in targets]
-    return images, {"score_map": score_maps, "geo_map": geo_maps, "rboxes": rboxes_list}
+    quads_list = [t["quads"] for t in targets]
+    return images, {"score_map": score_maps, "geo_map": geo_maps, "quads": quads_list}
 
 
 def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
@@ -514,20 +514,20 @@ def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
         img_t, tgt = dataset[i]
         gt_s = tgt["score_map"].squeeze(0).cpu().numpy()
         gt_g = tgt["geo_map"].cpu().numpy().transpose(1, 2, 0)
-        gt_r = tgt["rboxes"].cpu().numpy()
+        gt_quads = tgt["quads"].cpu().numpy()
 
         with torch.no_grad():
             out = model(img_t.unsqueeze(0).to(device))
         ps = out["score"][0].cpu().numpy().squeeze(0)
         pg = out["geometry"][0].cpu().numpy().transpose(1, 2, 0)
 
-        pred_r = decode_quads_from_maps(
+        pred_quads = decode_quads_from_maps(
             ps, pg, score_thresh=0.7, scale=1 / model.score_scale, quantization=1
         )
         
-        if len(pred_r) > 0:
-            pred_r = locality_aware_nms(
-                pred_r.astype(np.float32), 
+        if len(pred_quads) > 0:
+            pred_quads = locality_aware_nms(
+                pred_quads.astype(np.float32), 
                 iou_threshold=0.2,
                 iou_threshold_standard=0.05
             )
@@ -536,10 +536,10 @@ def _collage_batch(model, dataset, device, num: int = 4, cell_size: int = 640):
             img_tensor=img_t,
             gt_score_map=gt_s,
             gt_geo_map=gt_g,
-            gt_rboxes=gt_r,
+            gt_quads=gt_quads,
             pred_score_map=ps,
             pred_geo_map=pg,
-            pred_rboxes=pred_r,
+            pred_quads=pred_quads,
             cell_size=cell_size,
         )
         coll_imgs.append(coll)

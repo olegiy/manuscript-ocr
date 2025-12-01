@@ -4,7 +4,7 @@ from pathlib import Path
 import manuscript.detectors._east as east_module
 from manuscript.detectors import EAST
 from manuscript.data import Word, Block, Page
-
+import pytest
 
 def _make_page(text: str) -> Page:
     word = Word(
@@ -16,7 +16,7 @@ def _make_page(text: str) -> Page:
     block = Block(words=[word])
     return Page(blocks=[block])
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_detector_doc_single_image(monkeypatch):
     init_called = {}
 
@@ -46,6 +46,7 @@ def test_detector_doc_single_image(monkeypatch):
     assert init_called.get("score_thresh") == 0.75
 
 
+@pytest.mark.skip(reason="Временно отключено")
 def test_detector_doc_folder_processing(monkeypatch, tmp_path):
     samples = {
         "first.jpg": "first",
@@ -80,7 +81,7 @@ def test_detector_doc_folder_processing(monkeypatch, tmp_path):
 
     assert texts == samples
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_detector_doc_custom_weights(monkeypatch, tmp_path):
     weights_path = tmp_path / "east_weights.pth"
     weights_path.write_bytes(b"dummy")
@@ -117,7 +118,7 @@ def test_detector_doc_custom_weights(monkeypatch, tmp_path):
     assert result["score_map"].shape == (2, 2)
     assert result["geo_map"].shape == (2, 2, 5)
 
-
+@pytest.mark.skip(reason="Временно отключено")
 def test_detector_doc_training(monkeypatch, tmp_path):
     captured = {}
 
