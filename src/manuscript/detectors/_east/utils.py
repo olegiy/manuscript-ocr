@@ -186,15 +186,3 @@ def expand_boxes(
 
     expanded = np.hstack([new_coords.reshape(-1, 8), scores])
     return expanded.astype(np.float32)
-
-
-# Note: Legacy utility functions have been removed from this file.
-# All general-purpose utilities are now imported from manuscript.utils:
-# - read_image -> from manuscript.utils.io
-# - resolve_intersections -> from manuscript.utils.sorting
-# - sort_boxes_reading_order -> from manuscript.utils.sorting
-# - sort_into_lines -> from manuscript.utils.sorting
-# - box_iou -> from manuscript.utils.geometry
-# - match_boxes -> from manuscript.utils.metrics
-# - compute_f1_score -> from manuscript.utils.metrics
-# - evaluate_dataset -> from manuscript.utils.metrics

@@ -1,315 +1,305 @@
 import os
 import json
 from pathlib import Path
-from typing import List, Union, Tuple, Optional, Sequence, Dict, Any
+from typing import List, Union, Optional, Sequence, Dict, Any
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-try:
-    import gdown
-except ImportError:  # pragma: no cover - optional dependency for default weights
-    gdown = None  # type: ignore[assignment]
+from manuscript.api.base import BaseModel
+from manuscript.utils import read_image
 
 from .data.transforms import load_charset
 from .training.train import Config, run_training
 
 
-class TRBA:
-    _DEFAULT_PRESET_NAME = "trba_exp_lite"
-    _DEFAULT_RELEASE_WEIGHTS_URL = (
-        "https://github.com/konstantinkozhin/manuscript-ocr/"
-        "releases/download/v0.1.0/trba_exp_lite.onnx"
-    )
-    _DEFAULT_RELEASE_CONFIG_URL = (
-        "https://github.com/konstantinkozhin/manuscript-ocr/"
-        "releases/download/v0.1.0/trba_exp_lite.json"
-    )
-    _DEFAULT_RELEASE_CHARSET_URL = (
-        "https://github.com/konstantinkozhin/manuscript-ocr/"
-        "releases/download/v0.1.0/trba_exp_lite.txt"
-    )
-    _DEFAULT_STORAGE_ROOT = Path.home() / ".manuscript" / "trba"
-    _DEFAULT_WEIGHTS_FILENAME = "trba_exp_lite.onnx"
-    _DEFAULT_CONFIG_FILENAME = "trba_exp_lite.json"
-    _DEFAULT_CHARSET_FILENAME = "charset.txt"
+class TRBA(BaseModel):
+    """
+    Initialize TRBA text recognition model with ONNX Runtime.
+
+    Parameters
+    ----------
+    weights : str or Path, optional
+        Path or identifier for ONNX model weights. Supports:
+        
+        - Local file path: ``"path/to/model.onnx"``
+        - HTTP/HTTPS URL: ``"https://example.com/model.onnx"``
+        - GitHub release: ``"github://owner/repo/tag/file.onnx"``
+        - Google Drive: ``"gdrive:FILE_ID"``
+        - Preset name: ``"trba_lite_g1"`` or ``"trba_base_g1"`` (from pretrained_registry)
+        - ``None``: auto-downloads default preset (trba_lite_g1)
+        
+    config : str or Path, optional
+        Path or identifier for model configuration JSON. Same URL schemes
+        as ``weights``. If ``None``, attempts to infer from weights location
+        or uses default config for preset models.
+    charset : str or Path, optional
+        Path or identifier for character set file. If ``None``, attempts to
+        find charset near weights or falls back to package default.
+    device : {"cuda", "cpu"}, optional
+        Compute device. If ``None``, automatically selects CUDA if
+        available (requires onnxruntime-gpu), otherwise CPU.
+    **kwargs
+        Additional configuration options (reserved for future use).
+
+    Raises
+    ------
+    FileNotFoundError
+        If specified files do not exist.
+    ValueError
+        If weights format is invalid.
+
+    Notes
+    -----
+    The class provides three main public methods:
+
+    - ``predict`` — run text recognition inference on cropped word images.
+    - ``train`` — high-level training entrypoint to train a TRBA model
+      on custom datasets.
+    - ``export`` — static method to export PyTorch model to ONNX format.
+
+    Model uses ONNX Runtime for fast inference on CPU and GPU.
+    For GPU acceleration, install: ``pip install onnxruntime-gpu``
+
+    Examples
+    --------
+    Create recognizer with default preset (auto-downloads):
+
+    >>> from manuscript.recognizers import TRBA
+    >>> recognizer = TRBA()
+
+    Load from local ONNX file:
+
+    >>> recognizer = TRBA(weights="path/to/model.onnx")
+
+    Load from GitHub release:
+
+    >>> recognizer = TRBA(
+    ...     weights="github://owner/repo/v1.0/model.onnx",
+    ...     config="github://owner/repo/v1.0/config.json"
+    ... )
+
+    Force CPU execution:
+
+    >>> recognizer = TRBA(weights="model.onnx", device="cpu")
+    """
+    default_weights_name = "trba_lite_g1"
+    
+    pretrained_registry = {
+        "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.onnx",
+        "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.onnx",
+    }
+    
+    config_registry = {
+        "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.json",
+        "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.json",
+    }
+    
+    charset_registry = {
+        "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.txt",
+        "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.txt",
+    }
 
     def __init__(
         self,
-        weights_path: Optional[str] = None,
-        charset_path: Optional[str] = None,
-        config_path: Optional[str] = None,
+        weights: Optional[str] = None,
+        config: Optional[str] = None,
+        charset: Optional[str] = None,
         device: Optional[str] = None,
+        **kwargs,
     ):
-        """
-        Initialize TRBA text recognition model with ONNX Runtime.
-
-        Parameters
-        ----------
-        weights_path : str or Path, optional
-            Path to the ONNX model file (.onnx). If ``None``,
-            default pretrained ONNX model will be automatically downloaded to
-            ``~/.manuscript/trba/trba_exp_lite/trba_exp_lite.onnx``.
-        charset_path : str or Path, optional
-            Path to character set file. If ``None``, uses charset from
-            downloaded model or falls back to package default at
-            ``configs/charset.txt``.
-        config_path : str or Path, optional
-            Path to model configuration JSON file. If ``None``, attempts to
-            infer config path from model location or downloads default config
-            when using default weights.
-        device : {"cuda", "cpu"}, optional
-            Compute device. If ``None``, automatically selects CUDA if
-            available (requires onnxruntime-gpu), otherwise CPU.
-
-        Raises
-        ------
-        FileNotFoundError
-            If specified model, config, or charset files do not exist.
-        RuntimeError
-            If gdown is not installed and default weights need to be
-            downloaded.
-
-        Notes
-        -----
-        The class provides three main public methods:
-
-        - ``predict`` — run text recognition inference on cropped word images.
-        - ``train`` — high-level training entrypoint to train a TRBA model
-          on custom datasets.
-        - ``export_to_onnx`` — static method to export PyTorch model to ONNX format.
-
-        Examples
-        --------
-        Create recognizer with ONNX model:
-
-        >>> from manuscript.recognizers import TRBA
-        >>> recognizer = TRBA(weights_path="path/to/model.onnx")
-
-        With explicit config:
-
-        >>> recognizer = TRBA(
-        ...     weights_path="path/to/model.onnx",
-        ...     config_path="path/to/config.json"
-        ... )
-
-        Force CPU execution:
-
-        >>> recognizer = TRBA(weights_path="model.onnx", device="cpu")
+        # Initialize BaseModel (resolves weights and device)
+        super().__init__(weights=weights, device=device, **kwargs)
         
-        Notes
-        -----
-        Model uses ONNX Runtime for fast inference on CPU and GPU.
-        For GPU acceleration, install: ``pip install onnxruntime-gpu``
+        # Resolve config
+        self.config_path = self._resolve_config(config)
         
-        To export PyTorch model to ONNX:
-        ```
-        python scripts/export_trba_to_onnx.py \
-            --weights best_weights.pth \
-            --config config.json \
-            --output model.onnx
-        ```
-        """
-        resolved_model_path, resolved_config_path, resolved_charset_path = (
-            self._resolve_model_and_config_paths(
-                weights_path,
-                config_path,
-                charset_path,
-            )
-        )
+        # Resolve charset
+        self.charset_path = self._resolve_charset(charset)
 
-        self.model_path = resolved_model_path
-        self.charset_path = resolved_charset_path
-        self.config_path = resolved_config_path
+        # Load config
+        if not Path(self.config_path).exists():
+            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+        
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            config_dict = json.load(f)
 
-        if not os.path.exists(self.charset_path):
+        self.max_length = config_dict.get("max_len", 25)
+        self.hidden_size = config_dict.get("hidden_size", 256)
+        self.num_encoder_layers = config_dict.get("num_encoder_layers", 2)
+        self.img_h = config_dict.get("img_h", 32)
+        self.img_w = config_dict.get("img_w", 256)
+        self.cnn_in_channels = config_dict.get("cnn_in_channels", 3)
+        self.cnn_out_channels = config_dict.get("cnn_out_channels", 512)
+        self.cnn_backbone = config_dict.get("cnn_backbone", "seresnet31")
+
+        # Load charset
+        if not Path(self.charset_path).exists():
             raise FileNotFoundError(f"Charset file not found: {self.charset_path}")
-
-        if self.config_path is not None:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        else:
-            config = {}
-
-        self.max_length = config.get("max_len", 25)
-        self.hidden_size = config.get("hidden_size", 256)
-        self.num_encoder_layers = config.get("num_encoder_layers", 2)
-        self.img_h = config.get("img_h", 32)
-        self.img_w = config.get("img_w", 256)
-        self.cnn_in_channels = config.get("cnn_in_channels", 3)
-        self.cnn_out_channels = config.get("cnn_out_channels", 512)
-        self.cnn_backbone = config.get("cnn_backbone", "seresnet31")
-
-        # Определяем device для ONNX Runtime
-        self.device = device or ("cuda" if ort.get_device() == "GPU" else "cpu")
-
+        
         self.itos, self.stoi = load_charset(self.charset_path)
         self.pad_id = self.stoi["<PAD>"]
         self.sos_id = self.stoi["<SOS>"]
         self.eos_id = self.stoi["<EOS>"]
         self.blank_id = self.stoi.get("<BLANK>", None)
 
-        # Проверяем что файл существует и это ONNX модель
-        if not Path(self.model_path).exists():
-            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        # Verify ONNX file exists
+        if not Path(self.weights).exists():
+            raise FileNotFoundError(f"Model file not found: {self.weights}")
         
-        model_ext = Path(self.model_path).suffix.lower()
-        if model_ext != ".onnx":
-            raise ValueError(
-                f"Expected .onnx file, got: {self.model_path}"
+        if Path(self.weights).suffix.lower() != ".onnx":
+            raise ValueError(f"Expected .onnx file, got: {self.weights}")
+
+        # Initialize ONNX session
+        self.onnx_session = None
+
+    def _resolve_config(self, config: Optional[str]) -> str:
+        """
+        Resolve config path using BaseModel's artifact resolution.
+        Falls back to inferring from weights location.
+        
+        Search order:
+        1. Explicit config parameter (if provided)
+        2. Preset name from config_registry (if weights stem matches)
+        3. Same filename as weights but with .json extension
+        4. Default preset config
+        """
+        if config is not None:
+            # Use BaseModel's universal resolver
+            return self._resolve_extra_artifact(
+                config,
+                default_name=None,
+                registry=self.config_registry,
+                description="config"
             )
-
-        # Загружаем ONNX модель
-        providers = []
-        if self.device == "cuda":
-            providers.append("CUDAExecutionProvider")
-        providers.append("CPUExecutionProvider")
-
-        self.onnx_session = ort.InferenceSession(str(self.model_path), providers=providers)
-
-    def _resolve_model_and_config_paths(
-        self,
-        model_path: Optional[str],
-        config_path: Optional[str],
-        charset_path: Optional[str],
-    ) -> Tuple[str, Optional[str], str]:
-        if model_path is None:
-            return self._ensure_default_artifacts(config_path)
-
-        resolved_model_path = os.fspath(model_path)
-        if not os.path.exists(resolved_model_path):
-            raise FileNotFoundError(
-                f"Model checkpoint not found: {resolved_model_path}"
+        
+        # Try to infer from weights location
+        weights_path = Path(self.weights)
+        weights_stem = weights_path.stem
+        
+        # 1. Try preset name in config registry
+        if weights_stem in self.config_registry:
+            return self._resolve_extra_artifact(
+                weights_stem,
+                default_name=None,
+                registry=self.config_registry,
+                description="config"
             )
-
-        if config_path is not None:
-            resolved_config_path = os.fspath(config_path)
-            if not os.path.exists(resolved_config_path):
-                raise FileNotFoundError(
-                    f"Config file not found: {resolved_config_path}"
-                )
-        else:
-            resolved_config_path = self._infer_config_path_from_weights(
-                resolved_model_path
+        
+        # 2. Try same filename with .json extension (e.g., model.onnx → model.json)
+        config_candidate = weights_path.with_suffix(".json")
+        if config_candidate.exists():
+            return str(config_candidate.absolute())
+        
+        # 3. Use default preset config
+        if self.default_weights_name and self.default_weights_name in self.config_registry:
+            return self._resolve_extra_artifact(
+                self.default_weights_name,
+                default_name=None,
+                registry=self.config_registry,
+                description="config"
             )
+        
+        raise FileNotFoundError(
+            f"Could not find config file for weights: {self.weights}. "
+            f"Expected config at: {config_candidate}. "
+            f"Please specify config explicitly or ensure config file has same name as weights."
+        )
 
-        # Resolve charset
-        if charset_path is None:
-            # Try to find charset near model
-            charset_from_model = self._infer_charset_path_from_weights(resolved_model_path)
-            if charset_from_model:
-                resolved_charset_path = charset_from_model
-            else:
-                # Fallback to package default
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                resolved_charset_path = os.path.join(current_dir, "configs", "charset.txt")
-        else:
-            resolved_charset_path = os.fspath(charset_path)
-
-        return resolved_model_path, resolved_config_path, resolved_charset_path
-
-    def _infer_config_path_from_weights(self, weights_path: str) -> Optional[str]:
-        weights_file = Path(weights_path)
-        candidates = [
-            weights_file.with_suffix(".json"),
-            weights_file.parent / "config.json",
-        ]
-
-        for candidate in candidates:
-            if candidate.exists():
-                return os.fspath(candidate)
-        return None
-
-    def _infer_charset_path_from_weights(self, weights_path: str) -> Optional[str]:
-        weights_file = Path(weights_path)
-        candidates = [
-            weights_file.with_suffix(".txt"),
-            weights_file.parent / "charset.txt",
-        ]
-
-        for candidate in candidates:
-            if candidate.exists():
-                return os.fspath(candidate)
-        return None
-
-    def _ensure_default_artifacts(
-        self,
-        config_path: Optional[str],
-    ) -> Tuple[str, Optional[str], str]:
-        storage_root = self._DEFAULT_STORAGE_ROOT.expanduser()
-        target_dir = storage_root / self._DEFAULT_PRESET_NAME
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        # Download weights
-        weights_dest = target_dir / self._DEFAULT_WEIGHTS_FILENAME
-        if not weights_dest.exists():
-            self._download_file(self._DEFAULT_RELEASE_WEIGHTS_URL, weights_dest)
-
-        # Download config
-        if config_path is not None:
-            resolved_config_path = os.fspath(config_path)
-            if not os.path.exists(resolved_config_path):
-                raise FileNotFoundError(
-                    f"Config file not found: {resolved_config_path}"
-                )
-        else:
-            config_dest = target_dir / self._DEFAULT_CONFIG_FILENAME
-            if not config_dest.exists():
-                self._download_file(self._DEFAULT_RELEASE_CONFIG_URL, config_dest)
-            resolved_config_path = os.fspath(config_dest)
-
-        # Download charset
-        charset_dest = target_dir / self._DEFAULT_CHARSET_FILENAME
-        if not charset_dest.exists():
-            self._download_file(self._DEFAULT_RELEASE_CHARSET_URL, charset_dest)
-
-        return os.fspath(weights_dest), resolved_config_path, os.fspath(charset_dest)
-
-    def _download_file(self, url: str, destination: Path) -> None:
-        if gdown is None:
-            raise RuntimeError(
-                "gdown is required to download default TRBA weights. "
-                "Install gdown or pass weights_path/model_path explicitly."
+    def _resolve_charset(self, charset: Optional[str]) -> str:
+        """
+        Resolve charset path using BaseModel's artifact resolution.
+        Falls back to inferring from weights location or package default.
+        
+        Search order:
+        1. Explicit charset parameter (if provided)
+        2. Preset name from charset_registry (if weights stem matches)
+        3. Same filename as weights but with .txt extension
+        4. Default preset charset
+        5. Package default charset (configs/charset.txt)
+        """
+        if charset is not None:
+            # Use BaseModel's universal resolver
+            return self._resolve_extra_artifact(
+                charset,
+                default_name=None,
+                registry=self.charset_registry,
+                description="charset"
             )
+        
+        # Try to infer from weights location
+        weights_path = Path(self.weights)
+        weights_stem = weights_path.stem
+        
+        # 1. Try preset name in charset registry
+        if weights_stem in self.charset_registry:
+            return self._resolve_extra_artifact(
+                weights_stem,
+                default_name=None,
+                registry=self.charset_registry,
+                description="charset"
+            )
+        
+        # 2. Try same filename with .txt extension (e.g., model.onnx → model.txt)
+        charset_candidate = weights_path.with_suffix(".txt")
+        if charset_candidate.exists():
+            return str(charset_candidate.absolute())
+        
+        # 3. Try default preset charset
+        if self.default_weights_name and self.default_weights_name in self.charset_registry:
+            return self._resolve_extra_artifact(
+                self.default_weights_name,
+                default_name=None,
+                registry=self.charset_registry,
+                description="charset"
+            )
+        
+        # 4. Fallback to package default charset
+        current_dir = Path(__file__).parent
+        package_charset = current_dir / "configs" / "charset.txt"
+        if package_charset.exists():
+            return str(package_charset.absolute())
+        
+        raise FileNotFoundError(
+            f"Could not find charset file. "
+            f"Expected charset at: {charset_candidate} or {package_charset}. "
+            f"Please specify charset explicitly or ensure charset file has same name as weights."
+        )
 
-        print(f"Downloading TRBA artifact from {url} -> {destination}")
-        gdown.download(url, os.fspath(destination), quiet=False)
-        if not destination.exists():
-            raise RuntimeError(f"Failed to download artifact from {url}")
+    def _initialize_session(self):
+        """Initialize ONNX Runtime session (lazy loading)."""
+        if self.onnx_session is not None:
+            return
+
+        providers = self.runtime_providers()
+        self.onnx_session = ort.InferenceSession(str(self.weights), providers=providers)
 
     def _preprocess_image(
-        self, image: Union[np.ndarray, str, Image.Image]
+        self, image: Union[np.ndarray, str, Path, Image.Image]
     ) -> np.ndarray:
         """
         Preprocess image for ONNX inference. Returns [1, 3, H, W] numpy array.
         
         Applies same preprocessing as training:
-        1. Resize with aspect ratio preservation and padding
-        2. Normalize with mean=0.5, std=0.5 (same as albumentations)
+        1. Load image (supports str, Path, np.ndarray, PIL.Image)
+        2. Resize with aspect ratio preservation and padding
+        3. Normalize with mean=0.5, std=0.5
+        
+        Parameters
+        ----------
+        image : str, Path, np.ndarray, or PIL.Image
+            Input image in any supported format.
+            
+        Returns
+        -------
+        np.ndarray
+            Preprocessed image tensor with shape [1, 3, H, W].
         """
-        if isinstance(image, str):
-            if not os.path.exists(image):
-                raise FileNotFoundError(f"Image file not found: {image}")
-            # Read with Unicode support (кириллица в путях)
-            with open(image, 'rb') as f:
-                arr = np.frombuffer(f.read(), dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError(f"Cannot read image: {image}")
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        elif isinstance(image, Image.Image):
-            img = np.array(image.convert("RGB"))
-        elif isinstance(image, np.ndarray):
-            img = image.copy()
-            if img.ndim == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            elif img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
-        else:
-            raise ValueError(f"Unsupported image type: {type(image)}")
-
+        # Load image using unified read_image utility (handles all formats)
+        img = read_image(image)  # Returns RGB uint8 [H, W, 3]
+        
         # Resize with aspect ratio preservation and padding (like ResizeAndPadA)
         h, w = img.shape[:2]
         scale = min(self.img_h / max(h, 1), self.img_w / max(w, 1))
@@ -324,23 +314,22 @@ class TRBA:
         
         img_resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
         
-        # Create white canvas and paste resized image (center alignment)
+        # Create white canvas and paste resized image
         canvas = np.full((self.img_h, self.img_w, 3), 255, dtype=np.uint8)
         
-        # Center vertically
+        # Center vertically, left align horizontally
         y_offset = (self.img_h - new_h) // 2
-        # Left align horizontally
         x_offset = 0
         
         canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = img_resized
         
         # Normalize: mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)
-        # This is equivalent to: (x / 255.0 - 0.5) / 0.5 = (x - 127.5) / 127.5
+        # Equivalent to: (x / 255.0 - 0.5) / 0.5 = (x - 127.5) / 127.5
         img_normalized = (canvas.astype(np.float32) - 127.5) / 127.5
         
-        # Convert to CHW format
+        # Convert to CHW format and add batch dimension
         img_chw = np.transpose(img_normalized, (2, 0, 1))  # HWC -> CHW
-        img_batch = np.expand_dims(img_chw, axis=0)  # Add batch dimension
+        img_batch = np.expand_dims(img_chw, axis=0)  # [1, 3, H, W]
         
         return img_batch
 
@@ -394,6 +383,9 @@ class TRBA:
         >>> results = recognizer.predict(img_rgb)
         >>> print(results[0]["text"])
         """
+        # Initialize session on first call
+        if self.onnx_session is None:
+            self._initialize_session()
 
         if not isinstance(images, list):
             images_list = [images]
@@ -816,7 +808,7 @@ class TRBA:
         return run_training(config, device=device)
 
     @staticmethod
-    def export_to_onnx(
+    def export(
         weights_path: Union[str, Path],
         config_path: Union[str, Path],
         charset_path: Union[str, Path],
@@ -829,7 +821,7 @@ class TRBA:
 
         This method converts a trained TRBA model from PyTorch to ONNX format,
         which can be used for faster inference with ONNX Runtime. The exported
-        model can be loaded using ``TRBA(model_path="model.onnx")``.
+        model can be loaded using ``TRBA(weights="model.onnx")``.
 
         Parameters
         ----------
@@ -885,7 +877,7 @@ class TRBA:
         Export TRBA model to ONNX:
 
         >>> from manuscript.recognizers import TRBA
-        >>> TRBA.export_to_onnx(
+        >>> TRBA.export(
         ...     weights_path="experiments/best_model/best_acc_weights.pth",
         ...     config_path="experiments/best_model/config.json",
         ...     charset_path="configs/charset.txt",
@@ -899,7 +891,7 @@ class TRBA:
 
         Export with custom opset:
 
-        >>> TRBA.export_to_onnx(
+        >>> TRBA.export(
         ...     weights_path="model.pth",
         ...     config_path="config.json",
         ...     charset_path="charset.txt",
@@ -910,7 +902,7 @@ class TRBA:
 
         Use the exported model for inference:
 
-        >>> recognizer = TRBA(weights_path="trba_model.onnx")
+        >>> recognizer = TRBA(weights="trba_model.onnx")
         >>> result = recognizer.predict("word_image.jpg")
 
         See Also
@@ -1003,8 +995,6 @@ class TRBA:
         print("[OK] Model loaded")
 
         # Create ONNX wrapper
-        # ВАЖНО: используем max_length + 1, как в PyTorch режиме (greedy_decode с onnx_mode=False)
-        # Это обеспечивает одинаковое поведение PTH и ONNX моделей
         print(f"\nCreating ONNX wrapper...")
         print(f"   max_length from config: {max_length}")
         print(f"   ONNX will use: {max_length + 1} steps (max_length + 1 for compatibility)")
@@ -1100,4 +1090,3 @@ class TRBA:
         print(f"\nInput shape: [batch_size, 3, {img_h}, {img_w}]")
         print(f"Output shape: [batch_size, {max_length}, {num_classes}]")
         print(f"Decoding: Greedy (argmax over last dimension)")
-

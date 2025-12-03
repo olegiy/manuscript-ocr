@@ -6,6 +6,11 @@ import urllib.request
 import tempfile
 import onnxruntime as ort
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
 
 class BaseModel(ABC):
     """
@@ -150,13 +155,43 @@ class BaseModel(ABC):
         return d
 
     def _download_http(self, url: str) -> str:
+        """Download file from HTTP/HTTPS URL"""
         file = self._cache_dir / Path(url).name
         if file.exists():
             return str(file)
 
+        print(f"Downloading {Path(url).name} from {url}")
+        
+        # Create temporary file
         tmp = tempfile.NamedTemporaryFile(delete=False).name
-        urllib.request.urlretrieve(url, tmp)
+        
+        if tqdm is not None:
+            try:
+                # Get file size
+                with urllib.request.urlopen(url) as response:
+                    total_size = int(response.headers.get('content-length', 0))
+                
+                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, 
+                         desc=Path(url).name, ncols=80) as pbar:
+                    def reporthook(block_num, block_size, total_size):
+                        downloaded = block_num * block_size
+                        if downloaded < total_size:
+                            pbar.update(block_size)
+                        else:
+                            pbar.update(total_size - pbar.n)
+                    
+                    urllib.request.urlretrieve(url, tmp, reporthook=reporthook)
+            except Exception as e:
+                # Fallback to simple download if progress bar fails
+                print(f"Progress bar error ({e}), downloading without progress...")
+                urllib.request.urlretrieve(url, tmp)
+        else:
+            # No tqdm available, simple download
+            urllib.request.urlretrieve(url, tmp)
+        
+        # Move to cache
         shutil.move(tmp, file)
+        print(f"✓ Downloaded to {file}")
         return str(file)
 
     def _download_github(self, spec: str) -> str:
@@ -166,9 +201,29 @@ class BaseModel(ABC):
         return self._download_http(url)
 
     def _download_gdrive(self, spec: str) -> str:
+        """Download file from Google Drive with progress bar."""
         file_id = spec.split("gdrive:", 1)[1]
-        url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        return self._download_http(url)
+        
+        # Check if gdown is available for better GDrive support
+        try:
+            import gdown
+            
+            # Extract filename from cache or use file_id
+            file = self._cache_dir / f"{file_id}.bin"  # Will be renamed after download
+            
+            print(f"Downloading from Google Drive (ID: {file_id})")
+            output = gdown.download(id=file_id, output=str(file), quiet=False)
+            
+            if output is None:
+                raise RuntimeError(f"Failed to download from Google Drive: {file_id}")
+            
+            return output
+        except ImportError:
+            # Fallback to direct URL (may not work for large files)
+            print("Warning: gdown not installed. Using direct URL (may fail for large files)")
+            print("Install gdown for better Google Drive support: pip install gdown")
+            url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            return self._download_http(url)
 
     # -------------------------------------------------------------------------
     # BACKEND INITIALIZATION

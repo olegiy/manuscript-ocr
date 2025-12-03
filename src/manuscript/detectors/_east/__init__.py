@@ -1,10 +1,8 @@
 import os
-import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
-import gdown
 import numpy as np
 import onnxruntime as ort
 import torch

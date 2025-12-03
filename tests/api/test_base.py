@@ -292,19 +292,22 @@ class TestWeightResolution:
         expected_url = "https://github.com/owner/repo/releases/download/v2.0/models/subdir/model.onnx"
         mock_download_http.assert_called_once_with(expected_url)
     
-    @patch.object(ConcreteModel, '_download_http')
-    def test_gdrive_url_resolution(self, mock_download_http, tmp_path):
-        """Test Google Drive URL resolution."""
+    @patch('gdown.download')
+    def test_gdrive_url_resolution(self, mock_gdown_download, tmp_path):
+        """Test Google Drive URL resolution with gdown."""
         gdrive_spec = "gdrive:1234567890abcdef"
         
         mock_file = tmp_path / "model.onnx"
         mock_file.write_text("mock")
-        mock_download_http.return_value = str(mock_file)
+        mock_gdown_download.return_value = str(mock_file)
         
         model = ConcreteModel(weights=gdrive_spec)
         
-        expected_url = "https://drive.google.com/uc?export=download&id=1234567890abcdef"
-        mock_download_http.assert_called_once_with(expected_url)
+        # Verify gdown.download was called with correct file_id
+        mock_gdown_download.assert_called_once()
+        call_kwargs = mock_gdown_download.call_args.kwargs
+        assert call_kwargs['id'] == '1234567890abcdef'
+        assert call_kwargs['quiet'] == False
 
 
 # ============================================================================
@@ -418,15 +421,15 @@ class TestExtraArtifactResolution:
         expected_url = "https://github.com/user/repo/releases/download/v1.0/artifact.txt"
         mock_download.assert_called_once_with(expected_url)
     
-    @patch.object(ConcreteModel, '_download_http')
-    def test_resolve_artifact_from_gdrive(self, mock_download, tmp_path):
-        """Test downloading artifact from Google Drive."""
+    @patch('gdown.download')
+    def test_resolve_artifact_from_gdrive(self, mock_gdown_download, tmp_path):
+        """Test downloading artifact from Google Drive with gdown."""
         weights_file = tmp_path / "model.onnx"
         weights_file.write_text("mock")
         
         mock_file = tmp_path / "artifact.txt"
         mock_file.write_text("downloaded")
-        mock_download.return_value = str(mock_file)
+        mock_gdown_download.return_value = str(mock_file)
         
         model = ConcreteModel(weights=str(weights_file))
         
@@ -437,8 +440,10 @@ class TestExtraArtifactResolution:
             description="artifact"
         )
         
-        expected_url = "https://drive.google.com/uc?export=download&id=ABCDEFG123"
-        mock_download.assert_called_once_with(expected_url)
+        # Verify gdown.download was called with correct file_id
+        mock_gdown_download.assert_called_once()
+        call_kwargs = mock_gdown_download.call_args.kwargs
+        assert call_kwargs['id'] == 'ABCDEFG123'
     
     def test_artifact_no_default_raises_error(self, tmp_path):
         """Test error when no default artifact and None specified."""
@@ -572,21 +577,46 @@ class TestDownloadHelpers:
             expected = "https://github.com/owner/repo/releases/download/v1.0.0/weights.onnx"
             mock_download.assert_called_once_with(expected)
     
-    def test_download_gdrive_url_construction(self, tmp_path):
-        """Test Google Drive URL is correctly constructed."""
+    @patch('gdown.download')
+    def test_download_gdrive_url_construction(self, mock_gdown_download, tmp_path):
+        """Test Google Drive download with gdown."""
+        weights_file = tmp_path / "model.onnx"
+        weights_file.write_text("mock")
+        
+        downloaded_file = tmp_path / "downloaded.onnx"
+        downloaded_file.write_text("mock_downloaded")
+        mock_gdown_download.return_value = str(downloaded_file)
+        
+        model = ConcreteModel(weights=str(weights_file))
+        
+        spec = "gdrive:1Ab2Cd3Ef4Gh5"
+        result = model._download_gdrive(spec)
+        
+        # Verify gdown.download was called with correct file_id
+        mock_gdown_download.assert_called_once()
+        call_kwargs = mock_gdown_download.call_args.kwargs
+        assert call_kwargs['id'] == '1Ab2Cd3Ef4Gh5'
+        assert call_kwargs['quiet'] == False
+        assert result == str(downloaded_file)
+    
+    def test_download_gdrive_fallback_without_gdown(self, tmp_path):
+        """Test Google Drive fallback to HTTP when gdown not available."""
         weights_file = tmp_path / "model.onnx"
         weights_file.write_text("mock")
         
         model = ConcreteModel(weights=str(weights_file))
         
-        with patch.object(model, '_download_http') as mock_download:
-            mock_download.return_value = str(tmp_path / "downloaded.onnx")
-            
-            spec = "gdrive:1Ab2Cd3Ef4Gh5"
-            result = model._download_gdrive(spec)
-            
-            expected = "https://drive.google.com/uc?export=download&id=1Ab2Cd3Ef4Gh5"
-            mock_download.assert_called_once_with(expected)
+        # Mock gdown as not available
+        with patch.dict('sys.modules', {'gdown': None}):
+            with patch.object(model, '_download_http') as mock_download_http:
+                mock_download_http.return_value = str(tmp_path / "downloaded.onnx")
+                
+                spec = "gdrive:1Ab2Cd3Ef4Gh5"
+                result = model._download_gdrive(spec)
+                
+                # Should fallback to direct URL via _download_http
+                expected = "https://drive.google.com/uc?export=download&id=1Ab2Cd3Ef4Gh5"
+                mock_download_http.assert_called_once_with(expected)
 
 
 # ============================================================================

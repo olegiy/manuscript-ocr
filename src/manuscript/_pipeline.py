@@ -1,20 +1,52 @@
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
 import numpy as np
 from PIL import Image
-from typing import Union, Optional
-import cv2
-from pathlib import Path
-import time
-from typing import List, Tuple
+
+from .data import Page
 from .detectors import EAST
 from .recognizers import TRBA
-from .utils import (
-    visualize_page,
-    read_image,
-    sort_into_lines,
-)
+from .utils import read_image, visualize_page
 
 
 class Pipeline:
+    """
+    High-level OCR pipeline combining text detection and recognition.
+
+    The Pipeline class orchestrates EAST detector and TRBA recognizer to perform
+    complete OCR workflow: detection → crop extraction → recognition → result merging.
+
+    Attributes
+    ----------
+    detector : EAST
+        Text detector instance
+    recognizer : TRBA
+        Text recognizer instance
+    min_text_size : int
+        Minimum text box size in pixels (width and height)
+
+    Examples
+    --------
+    Create pipeline with default models:
+
+    >>> from manuscript import Pipeline
+    >>> pipeline = Pipeline()
+    >>> result = pipeline.predict("document.jpg")
+    >>> text = pipeline.get_text(result["page"])
+    >>> print(text)
+
+    Create pipeline with custom models:
+
+    >>> from manuscript import Pipeline
+    >>> from manuscript.detectors import EAST
+    >>> from manuscript.recognizers import TRBA
+    >>> detector = EAST(weights="east_50_g1", score_thresh=0.8)
+    >>> recognizer = TRBA(weights="trba_lite_g1", device="cuda")
+    >>> pipeline = Pipeline(detector=detector, recognizer=recognizer)
+    """
+
     def __init__(
         self,
         detector: Optional[EAST] = None,
@@ -31,23 +63,8 @@ class Pipeline:
         recognizer : TRBA, optional
             Text recognizer instance. If None, creates default TRBA recognizer.
         min_text_size : int, optional
-            Minimum text size in pixels. Default is 5.
-
-        Examples
-        --------
-        Create pipeline with default models:
-
-        >>> from manuscript import Pipeline
-        >>> pipeline = Pipeline()
-
-        Create pipeline with custom models:
-
-        >>> from manuscript import Pipeline
-        >>> from manuscript.detectors import EAST
-        >>> from manuscript.recognizers import TRBA
-        >>> detector = EAST(score_thresh=0.8)
-        >>> recognizer = TRBA(device="cuda")
-        >>> pipeline = Pipeline(detector=detector, recognizer=recognizer)
+            Minimum text size in pixels. Boxes smaller than this will be
+            filtered out before recognition. Default is 5.
         """
         self.detector = detector if detector is not None else EAST()
         self.recognizer = recognizer if recognizer is not None else TRBA()
@@ -55,88 +72,121 @@ class Pipeline:
 
     def predict(
         self,
-        image: Union[str, np.ndarray, Image.Image],
+        image: Union[str, Path, np.ndarray, Image.Image],
         recognize_text: bool = True,
         vis: bool = False,
         profile: bool = False,
-    ):
+    ) -> Union[Dict, tuple]:
+        """
+        Run OCR pipeline on a single image.
+
+        Parameters
+        ----------
+        image : str, Path, numpy.ndarray, or PIL.Image
+            Input image. Can be:
+            - Path to image file (str or Path)
+            - RGB numpy array with shape (H, W, 3) in uint8
+            - PIL Image object
+        recognize_text : bool, optional
+            If True, performs both detection and recognition.
+            If False, performs only detection. Default is True.
+        vis : bool, optional
+            If True, returns visualization image along with results.
+            Default is False.
+        profile : bool, optional
+            If True, prints timing information for each pipeline stage.
+            Default is False.
+
+        Returns
+        -------
+        dict or tuple
+            If vis=False:
+                dict with keys:
+                - "page" : Page object with detection/recognition results
+                
+            If vis=True:
+                tuple of (result_dict, vis_image)
+
+        Examples
+        --------
+        Basic usage:
+
+        >>> pipeline = Pipeline()
+        >>> result = pipeline.predict("document.jpg")
+        >>> page = result["page"]
+        >>> print(page.blocks[0].lines[0].words[0].text)
+
+        Detection only:
+
+        >>> result = pipeline.predict("document.jpg", recognize_text=False)
+        >>> # Words will have polygon and detection_confidence but no text
+
+        With visualization:
+
+        >>> result, vis_img = pipeline.predict("document.jpg", vis=True)
+        >>> vis_img.show()
+
+        With profiling:
+
+        >>> result = pipeline.predict("document.jpg", profile=True)
+        # Prints timing for each stage
+        """
         start_time = time.time()
 
         # ---- DETECTION ----
         t0 = time.time()
-        det_out = self.detector.predict(image, vis=False, profile=profile)
-
-        if isinstance(det_out, dict):
-            detection_result = det_out.get("page")
-        elif isinstance(det_out, tuple):
-            detection_result = det_out[0]
-        else:
-            detection_result = det_out
-
-        if detection_result is None:
-            raise RuntimeError("Detector did not return a Page result.")
+        detection_result = self.detector.predict(
+            image,
+            return_maps=False,
+            sort_reading_order=True
+        )
+        page: Page = detection_result["page"]
 
         if profile:
             print(f"Detection: {time.time() - t0:.3f}s")
 
         # ---- If recognition not needed ----
         if not recognize_text:
+            result = {"page": page}
+            
             if vis:
-                arr = read_image(image)
-                pil = image if isinstance(image, Image.Image) else Image.fromarray(arr)
-                vis_img = visualize_page(pil, detection_result, show_order=False)
-                return detection_result, vis_img
-            return detection_result
+                img_array = read_image(image)
+                pil_img = (
+                    image if isinstance(image, Image.Image)
+                    else Image.fromarray(img_array)
+                )
+                vis_img = visualize_page(pil_img, page, show_order=False)
+                return result, vis_img
+            
+            return result
 
-        # ---- LOAD IMAGE ----
+        # ---- LOAD IMAGE FOR CROPPING ----
         t0 = time.time()
         image_array = read_image(image)
         if profile:
             print(f"Load image for crops: {time.time() - t0:.3f}s")
 
-        # ---- SORT + EXTRACT ----
+        # ---- EXTRACT WORD CROPS ----
         t0 = time.time()
-        all_words = []
         word_images = []
+        word_objects = []  # Keep references to Word objects for updating
 
-        for block in detection_result.blocks:
-
-            boxes = []
-            for w in block.words:
-                poly = np.array(w.polygon, dtype=np.int32)
-                x_min, y_min = np.min(poly, axis=0)
-                x_max, y_max = np.max(poly, axis=0)
-                boxes.append((x_min, y_min, x_max, y_max))
-
-            lines = sort_into_lines(boxes)
-            # Flatten lines back to a single list
-            sorted_boxes = [box for line in lines for box in line]
-
-            new_order = []
-            for bx in sorted_boxes:
-                for w in block.words:
-                    poly = np.array(w.polygon, dtype=np.int32)
+        for block in page.blocks:
+            for line in block.lines:
+                for word in line.words:
+                    poly = np.array(word.polygon, dtype=np.int32)
                     x_min, y_min = np.min(poly, axis=0)
                     x_max, y_max = np.max(poly, axis=0)
-                    if (x_min, y_min, x_max, y_max) == bx:
-                        new_order.append(w)
-                        break
 
-            block.words = new_order
+                    width = x_max - x_min
+                    height = y_max - y_min
 
-            for word in block.words:
-                poly = np.array(word.polygon, dtype=np.int32)
-                x_min, y_min = np.min(poly, axis=0)
-                x_max, y_max = np.max(poly, axis=0)
-
-                width = x_max - x_min
-                height = y_max - y_min
-
-                if width >= self.min_text_size and height >= self.min_text_size:
-                    region_image = self._extract_word_image(image_array, poly)
-                    if region_image is not None and region_image.size > 0:
-                        all_words.append(word)
-                        word_images.append(region_image)
+                    # Filter by minimum size
+                    if width >= self.min_text_size and height >= self.min_text_size:
+                        region_image = self._extract_word_image(image_array, poly)
+                        if region_image is not None and region_image.size > 0:
+                            word_images.append(region_image)
+                            word_objects.append(word)
 
         if profile:
             print(f"Extract {len(word_images)} crops: {time.time() - t0:.3f}s")
@@ -144,60 +194,104 @@ class Pipeline:
         # ---- RECOGNITION ----
         if word_images:
             t0 = time.time()
-            recognition_results = self.recognizer.predict(word_images)
+            recognition_results = self.recognizer.predict(word_images, batch_size=32)
             if profile:
                 print(f"Recognition: {time.time() - t0:.3f}s")
 
-            for idx, word in enumerate(all_words):
-                result = recognition_results[idx]
-
-                if isinstance(result, dict):
-                    text = result.get("text", "")
-                    confidence = result.get("confidence", None)
-                elif isinstance(result, tuple) and len(result) == 2:
-                    text, confidence = result
-                else:
-                    text = str(result) if result is not None else ""
-                    confidence = None
-
-                word.text = text
-                word.recognition_confidence = confidence
+            # Update Word objects with recognition results
+            for word_obj, result in zip(word_objects, recognition_results):
+                word_obj.text = result["text"]
+                word_obj.recognition_confidence = result["confidence"]
 
         if profile:
             print(f"Pipeline total: {time.time() - start_time:.3f}s")
 
+        result = {"page": page}
+
         if vis:
-            pil = (
-                image
-                if isinstance(image, Image.Image)
+            pil_img = (
+                image if isinstance(image, Image.Image)
                 else Image.fromarray(image_array)
             )
-            vis_img = visualize_page(pil, detection_result, show_order=True)
-            return detection_result, vis_img
+            vis_img = visualize_page(pil_img, page, show_order=True)
+            return result, vis_img
 
-        return detection_result
+        return result
 
     def process_batch(
         self,
-        images: List[Union[str, np.ndarray, Image.Image]],
+        images: List[Union[str, Path, np.ndarray, Image.Image]],
         recognize_text: bool = True,
         vis: bool = False,
         profile: bool = False,
-    ):
+    ) -> List[Union[Dict, tuple]]:
+        """
+        Process multiple images in sequence.
+
+        Parameters
+        ----------
+        images : list
+            List of images to process. Each can be str, Path, numpy.ndarray, or PIL.Image.
+        recognize_text : bool, optional
+            If True, performs recognition. Default is True.
+        vis : bool, optional
+            If True, returns visualization for each image. Default is False.
+        profile : bool, optional
+            If True, prints timing information. Default is False.
+
+        Returns
+        -------
+        list
+            List of results (dict or tuple) for each input image.
+
+        Examples
+        --------
+        >>> pipeline = Pipeline()
+        >>> images = ["page1.jpg", "page2.jpg", "page3.jpg"]
+        >>> results = pipeline.process_batch(images)
+        >>> for result in results:
+        ...     text = pipeline.get_text(result["page"])
+        ...     print(text)
+        """
         results = []
         for img in images:
-            res = self.process(
-                img, recognize_text=recognize_text, vis=vis, profile=profile
+            res = self.predict(
+                img,
+                recognize_text=recognize_text,
+                vis=vis,
+                profile=profile
             )
-            results.append(res[0] if vis else res)
+            results.append(res)
         return results
 
-    def get_text(self, page) -> str:
+    def get_text(self, page: Page) -> str:
+        """
+        Extract plain text from Page object.
+
+        Parameters
+        ----------
+        page : Page
+            Page object with recognition results.
+
+        Returns
+        -------
+        str
+            Extracted text with lines separated by newlines.
+
+        Examples
+        --------
+        >>> pipeline = Pipeline()
+        >>> result = pipeline.predict("document.jpg")
+        >>> text = pipeline.get_text(result["page"])
+        >>> print(text)
+        """
         lines = []
         for block in page.blocks:
-            texts = [w.text for w in block.words if getattr(w, "text", None)]
-            if texts:
-                lines.append(" ".join(texts))
+            for line in block.lines:
+                # Extract text from words in the line
+                texts = [w.text for w in line.words if w.text]
+                if texts:
+                    lines.append(" ".join(texts))
         return "\n".join(lines)
 
     def _extract_word_image(

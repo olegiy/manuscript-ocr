@@ -1,166 +1,118 @@
-"""
-Тесты совместимости Pipeline API с различными реализациями
-детекторов и распознавателей
-"""
-
-import pytest
 import numpy as np
 from PIL import Image
-from typing import List, Tuple, Union, Dict, Any
+from typing import List, Dict, Any, Union
 
 from manuscript import Pipeline
-from manuscript.data import Word, Block, Page
+from manuscript.data import Word, Line, Block, Page
 
 
 class DummyDetector:
-    """
-    Минимальная реализация детектора для проверки совместимости API.
-
-    Реализует только необходимый интерфейс:
-    - метод predict(image, vis=False, profile=False)
-    - возвращает dict с ключом "page" содержащим объект Page
-    """
-
-    def __init__(self, return_type: str = "dict"):
-        """
-        Parameters
-        ----------
-        return_type : {"dict", "tuple", "page"}
-            Формат возвращаемого значения для проверки всех вариантов
-        """
-        self.return_type = return_type
+    def __init__(self):
+        pass
 
     def predict(
         self,
-        image: Union[str, np.ndarray, Image.Image],
-        vis: bool = False,
-        profile: bool = False,
-    ) -> Union[Dict[str, Any], Tuple[Page, Any], Page]:
-        """
-        Возвращает фиксированный результат детекции с 3 словами.
-        """
-        # Создаем 3 фиксированных слова
+        img_or_path: Union[str, np.ndarray, Image.Image],
+        return_maps: bool = False,
+        sort_reading_order: bool = True,
+    ) -> Dict[str, Any]:
+        # Create 3 words in reading order
         words = [
             Word(
-                polygon=[[10.0, 10.0], [100.0, 10.0], [100.0, 50.0], [10.0, 50.0]],
+                polygon=[(10.0, 10.0), (100.0, 10.0), (100.0, 50.0), (10.0, 50.0)],
                 detection_confidence=0.95,
+                order=0,
             ),
             Word(
-                polygon=[[110.0, 10.0], [200.0, 10.0], [200.0, 50.0], [110.0, 50.0]],
+                polygon=[(110.0, 10.0), (200.0, 10.0), (200.0, 50.0), (110.0, 50.0)],
                 detection_confidence=0.92,
+                order=1,
             ),
             Word(
-                polygon=[[210.0, 10.0], [300.0, 10.0], [300.0, 50.0], [210.0, 50.0]],
+                polygon=[(210.0, 10.0), (300.0, 10.0), (300.0, 50.0), (210.0, 50.0)],
                 detection_confidence=0.88,
+                order=2,
             ),
         ]
-
-        block = Block(words=words)
+        line = Line(words=words, order=0)
+        
+        block = Block(lines=[line], order=0)
+        
         page = Page(blocks=[block])
 
-        # Возвращаем в разных форматах в зависимости от настройки
-        if self.return_type == "dict":
-            return {"page": page, "score_map": None, "geo_map": None}
-        elif self.return_type == "tuple":
-            return (page, None)
-        else:  # "page"
-            return page
+        return {
+            "page": page,
+            "score_map": None if not return_maps else np.zeros((100, 100)),
+            "geo_map": None if not return_maps else np.zeros((100, 100, 5)),
+        }
 
 
 class DummyRecognizer:
-    """
-    Минимальная реализация распознавателя для проверки совместимости API.
-
-    Реализует только необходимый интерфейс:
-    - метод predict(images)
-    - возвращает список словарей {"text": str, "confidence": float}
-    """
-
     def __init__(self):
-        """Инициализация dummy распознавателя."""
         self.call_count = 0
 
-    def predict(self, images: List[np.ndarray]) -> List[Dict[str, Any]]:
-        """
-        Возвращает фиксированные тексты для каждого изображения.
-        """
+    def predict(
+        self, images: List[np.ndarray], batch_size: int = 32
+    ) -> List[Dict[str, Any]]:
         self.call_count += 1
 
         results = []
         for i, img in enumerate(images):
-            results.append({"text": f"word{i + 1}", "confidence": 0.9 - i * 0.05})
+            results.append({
+                "text": f"word{i + 1}",
+                "confidence": 0.9 - i * 0.05
+            })
 
         return results
 
 
-@pytest.mark.skip(reason="Временно отключено")
 class TestPipelineAPICompatibility:
-    """Тесты совместимости Pipeline с различными реализациями"""
+    """Tests for Pipeline compatibility with new BaseModel API"""
 
-    def test_pipeline_with_dict_detector(self):
-        """Тест Pipeline с детектором возвращающим dict"""
-        detector = DummyDetector(return_type="dict")
+    def test_pipeline_basic_usage(self):
+        """Test basic Pipeline usage with new API"""
+        detector = DummyDetector()
         recognizer = DummyRecognizer()
 
         pipeline = Pipeline(detector=detector, recognizer=recognizer)
 
-        # Создаем тестовое изображение
+        # Create test image
         img = np.zeros((100, 400, 3), dtype=np.uint8)
 
         result = pipeline.predict(img, recognize_text=True, vis=False)
 
-        # Проверяем результат
-        assert isinstance(result, Page)
-        assert len(result.blocks) == 1
-        assert len(result.blocks[0].words) == 3
+        # Check result is dict with "page" key
+        assert isinstance(result, dict)
+        assert "page" in result
+        
+        page = result["page"]
+        assert isinstance(page, Page)
+        assert len(page.blocks) == 1
+        assert len(page.blocks[0].lines) == 1
+        assert len(page.blocks[0].lines[0].words) == 3
 
-        # Проверяем что распознавание выполнено
-        assert result.blocks[0].words[0].text == "word1"
-        assert result.blocks[0].words[1].text == "word2"
-        assert result.blocks[0].words[2].text == "word3"
+        # Check recognition was performed
+        assert page.blocks[0].lines[0].words[0].text == "word1"
+        assert page.blocks[0].lines[0].words[1].text == "word2"
+        assert page.blocks[0].lines[0].words[2].text == "word3"
 
-    def test_pipeline_with_tuple_detector(self):
-        """Тест Pipeline с детектором возвращающим tuple"""
-        detector = DummyDetector(return_type="tuple")
-        recognizer = DummyRecognizer()
-
-        pipeline = Pipeline(detector=detector, recognizer=recognizer)
-
-        img = np.zeros((100, 400, 3), dtype=np.uint8)
-        result = pipeline.predict(img, recognize_text=True, vis=False)
-
-        assert isinstance(result, Page)
-        assert len(result.blocks[0].words) == 3
-
-    def test_pipeline_with_page_detector(self):
-        """Тест Pipeline с детектором возвращающим напрямую Page"""
-        detector = DummyDetector(return_type="page")
-        recognizer = DummyRecognizer()
-
-        pipeline = Pipeline(detector=detector, recognizer=recognizer)
-
-        img = np.zeros((100, 400, 3), dtype=np.uint8)
-        result = pipeline.predict(img, recognize_text=True, vis=False)
-
-        assert isinstance(result, Page)
-        assert len(result.blocks[0].words) == 3
-
-    def test_pipeline_with_non_tuple_recognizer(self):
-        """Тест Pipeline с распознавателем возвращающим dict (новый формат)"""
+    def test_pipeline_returns_dict_structure(self):
+        """Test that Pipeline returns consistent dict structure"""
         detector = DummyDetector()
         recognizer = DummyRecognizer()
 
         pipeline = Pipeline(detector=detector, recognizer=recognizer)
 
         img = np.zeros((100, 400, 3), dtype=np.uint8)
-        result = pipeline.predict(img, recognize_text=True, vis=False)
+        result = pipeline.predict(img)
 
-        # Проверяем что новый формат работает
-        assert result.blocks[0].words[0].text == "word1"
-        assert result.blocks[0].words[0].recognition_confidence == 0.9
+        # New API: always returns dict
+        assert isinstance(result, dict)
+        assert "page" in result
+        assert isinstance(result["page"], Page)
 
     def test_pipeline_without_recognition(self):
-        """Тест Pipeline без распознавания"""
+        """Test Pipeline detection-only mode"""
         detector = DummyDetector()
         recognizer = DummyRecognizer()
 
@@ -169,14 +121,15 @@ class TestPipelineAPICompatibility:
         img = np.zeros((100, 400, 3), dtype=np.uint8)
         result = pipeline.predict(img, recognize_text=False, vis=False)
 
-        # Распознаватель не должен вызываться
+        # Recognizer should not be called
         assert recognizer.call_count == 0
 
-        # Слова должны быть без текста
-        assert result.blocks[0].words[0].text is None
+        # Words should have no text
+        page = result["page"]
+        assert page.blocks[0].lines[0].words[0].text is None
 
     def test_pipeline_with_visualization(self):
-        """Тест Pipeline с визуализацией"""
+        """Test Pipeline with visualization output"""
         detector = DummyDetector()
         recognizer = DummyRecognizer()
 
@@ -185,11 +138,13 @@ class TestPipelineAPICompatibility:
         img = np.zeros((100, 400, 3), dtype=np.uint8)
         result, vis_img = pipeline.predict(img, recognize_text=True, vis=True)
 
-        assert isinstance(result, Page)
+        # Should return tuple when vis=True
+        assert isinstance(result, dict)
+        assert isinstance(result["page"], Page)
         assert isinstance(vis_img, Image.Image)
 
     def test_pipeline_get_text(self):
-        """Тест метода get_text"""
+        """Test get_text method with new Line structure"""
         detector = DummyDetector()
         recognizer = DummyRecognizer()
 
@@ -198,77 +153,164 @@ class TestPipelineAPICompatibility:
         img = np.zeros((100, 400, 3), dtype=np.uint8)
         result = pipeline.predict(img, recognize_text=True, vis=False)
 
-        text = pipeline.get_text(result)
+        page = result["page"]
+        text = pipeline.get_text(page)
 
-        # Должен вернуть объединенный текст
+        # Should return combined text from all lines
         assert "word1" in text
         assert "word2" in text
         assert "word3" in text
 
+    def test_pipeline_hierarchical_structure(self):
+        """Test that Pipeline preserves Page → Block → Line → Word hierarchy"""
+        detector = DummyDetector()
+        recognizer = DummyRecognizer()
+
+        pipeline = Pipeline(detector=detector, recognizer=recognizer)
+
+        img = np.zeros((100, 400, 3), dtype=np.uint8)
+        result = pipeline.predict(img)
+
+        page = result["page"]
+        
+        # Check hierarchy
+        assert isinstance(page, Page)
+        assert len(page.blocks) > 0
+        
+        block = page.blocks[0]
+        assert isinstance(block, Block)
+        assert len(block.lines) > 0
+        
+        line = block.lines[0]
+        assert isinstance(line, Line)
+        assert len(line.words) > 0
+        
+        word = line.words[0]
+        assert isinstance(word, Word)
+        assert word.polygon is not None
+        assert word.detection_confidence is not None
+
+    def test_pipeline_word_ordering(self):
+        """Test that words maintain their reading order"""
+        detector = DummyDetector()
+        recognizer = DummyRecognizer()
+
+        pipeline = Pipeline(detector=detector, recognizer=recognizer)
+
+        img = np.zeros((100, 400, 3), dtype=np.uint8)
+        result = pipeline.predict(img)
+
+        page = result["page"]
+        words = page.blocks[0].lines[0].words
+        
+        # Check words have order attribute
+        assert all(w.order is not None for w in words)
+        
+        # Check order is sequential
+        assert words[0].order == 0
+        assert words[1].order == 1
+        assert words[2].order == 2
+
     def test_pipeline_min_text_size_filtering(self):
-        """Тест фильтрации по минимальному размеру"""
+        """Test filtering by minimum text size"""
 
         class SmallBoxDetector(DummyDetector):
-            """Детектор с очень маленькими боксами"""
+            """Detector with very small boxes"""
 
-            def predict(self, image, vis=False, profile=False):
-                # Создаем слова с маленькими боксами (меньше min_text_size)
+            def predict(self, img_or_path, return_maps=False, sort_reading_order=True):
+                # Create words with tiny boxes (smaller than min_text_size)
                 words = [
                     Word(
                         polygon=[
-                            [10.0, 10.0],
-                            [12.0, 10.0],
-                            [12.0, 12.0],
-                            [10.0, 12.0],
+                            (10.0, 10.0),
+                            (12.0, 10.0),
+                            (12.0, 12.0),
+                            (10.0, 12.0),
                         ],
                         detection_confidence=0.95,
+                        order=0,
                     ),
                 ]
-                return {"page": Page(blocks=[Block(words=words)])}
+                line = Line(words=words, order=0)
+                block = Block(lines=[line], order=0)
+                page = Page(blocks=[block])
+                return {"page": page}
 
         detector = SmallBoxDetector()
         recognizer = DummyRecognizer()
 
-        # min_text_size = 5 (по умолчанию)
+        # min_text_size = 5 (default)
         pipeline = Pipeline(detector=detector, recognizer=recognizer, min_text_size=5)
 
         img = np.zeros((100, 400, 3), dtype=np.uint8)
         result = pipeline.predict(img, recognize_text=True, vis=False)
 
-        # Распознаватель не должен вызываться т.к. все боксы отфильтрованы
+        # Recognizer should not be called because all boxes are filtered out
         assert recognizer.call_count == 0
 
+    def test_pipeline_confidence_preservation(self):
+        """Test that confidence scores are properly preserved"""
+        detector = DummyDetector()
+        recognizer = DummyRecognizer()
 
-@pytest.mark.skip(reason="Временно отключено")
+        pipeline = Pipeline(detector=detector, recognizer=recognizer)
+
+        img = np.zeros((100, 400, 3), dtype=np.uint8)
+        result = pipeline.predict(img)
+
+        page = result["page"]
+        words = page.blocks[0].lines[0].words
+
+        # Check detection confidence is preserved
+        assert words[0].detection_confidence == 0.95
+        assert words[1].detection_confidence == 0.92
+        assert words[2].detection_confidence == 0.88
+
+        # Check recognition confidence is added
+        assert words[0].recognition_confidence == 0.9
+        assert words[1].recognition_confidence == 0.85
+        assert words[2].recognition_confidence == 0.8
+
+
 class TestDummyImplementations:
-    """Тесты самих dummy реализаций"""
+    """Tests for dummy detector and recognizer implementations"""
 
-    def test_dummy_detector_dict_format(self):
-        """Тест DummyDetector возвращает корректный dict"""
-        detector = DummyDetector(return_type="dict")
+    def test_dummy_detector_returns_correct_format(self):
+        """Test DummyDetector returns correct dict format"""
+        detector = DummyDetector()
         result = detector.predict(np.zeros((100, 100, 3), dtype=np.uint8))
 
         assert isinstance(result, dict)
         assert "page" in result
         assert isinstance(result["page"], Page)
+        assert "score_map" in result
+        assert "geo_map" in result
 
-    def test_dummy_detector_tuple_format(self):
-        """Тест DummyDetector возвращает корректный tuple"""
-        detector = DummyDetector(return_type="tuple")
+    def test_dummy_detector_creates_hierarchical_structure(self):
+        """Test DummyDetector creates proper Page hierarchy"""
+        detector = DummyDetector()
         result = detector.predict(np.zeros((100, 100, 3), dtype=np.uint8))
 
-        assert isinstance(result, tuple)
-        assert isinstance(result[0], Page)
+        page = result["page"]
+        assert len(page.blocks) == 1
+        assert len(page.blocks[0].lines) == 1
+        assert len(page.blocks[0].lines[0].words) == 3
 
-    def test_dummy_detector_page_format(self):
-        """Тест DummyDetector возвращает корректный Page"""
-        detector = DummyDetector(return_type="page")
-        result = detector.predict(np.zeros((100, 100, 3), dtype=np.uint8))
+    def test_dummy_detector_with_return_maps(self):
+        """Test DummyDetector with return_maps=True"""
+        detector = DummyDetector()
+        result = detector.predict(
+            np.zeros((100, 100, 3), dtype=np.uint8),
+            return_maps=True
+        )
 
-        assert isinstance(result, Page)
+        assert result["score_map"] is not None
+        assert result["geo_map"] is not None
+        assert isinstance(result["score_map"], np.ndarray)
+        assert isinstance(result["geo_map"], np.ndarray)
 
-    def test_dummy_recognizer_tuple_format(self):
-        """Тест DummyRecognizer возвращает словари"""
+    def test_dummy_recognizer_returns_correct_format(self):
+        """Test DummyRecognizer returns list of dicts"""
         recognizer = DummyRecognizer()
         images = [np.zeros((64, 256, 3), dtype=np.uint8) for _ in range(3)]
 
@@ -278,92 +320,128 @@ class TestDummyImplementations:
         assert all(isinstance(r, dict) for r in results)
         assert all("text" in r and "confidence" in r for r in results)
 
-    def test_dummy_recognizer_text_only_format(self):
-        """Тест DummyRecognizer структура данных"""
+    def test_dummy_recognizer_correct_content(self):
+        """Test DummyRecognizer returns correct text and confidence"""
         recognizer = DummyRecognizer()
         images = [np.zeros((64, 256, 3), dtype=np.uint8) for _ in range(3)]
 
         results = recognizer.predict(images)
 
-        assert len(results) == 3
         assert results[0]["text"] == "word1"
         assert results[0]["confidence"] == 0.9
+        assert results[1]["text"] == "word2"
+        assert results[1]["confidence"] == 0.85
+        assert results[2]["text"] == "word3"
+        assert results[2]["confidence"] == 0.8
 
 
-@pytest.mark.skip(reason="Временно отключено")
-def test_readme_example_works_with_dummy():
+def test_pipeline_integration_example():
     """
-    Проверка что пример из README работает с dummy реализациями.
-    Это гарантирует что API действительно универсален.
+    Test that Pipeline API works as documented.
+    This ensures the API is truly universal and user-friendly.
     """
-    # Используем dummy реализации вместо EAST и TRBA
+    # Use dummy implementations
     detector = DummyDetector()
     recognizer = DummyRecognizer()
 
-    # Пример из README
+    # Example from documentation
     pipeline = Pipeline(detector, recognizer)
 
-    # Создаем тестовое изображение
+    # Create test image
     img = np.zeros((100, 400, 3), dtype=np.uint8)
 
-    # Полная обработка изображения
+    # Full image processing
     result = pipeline.predict(img)
 
-    # Получение распознанного текста
-    text = pipeline.get_text(result)
+    # Get recognized text
+    text = pipeline.get_text(result["page"])
 
     assert text is not None
     assert len(text) > 0
 
-    # Подробная информация о каждом слове
-    for block in result.blocks:
-        for word in block.words:
-            assert word.text is not None
-            assert word.detection_confidence is not None
-            # recognition_confidence может быть None если распознаватель не вернул его
+    # Detailed information for each word
+    page = result["page"]
+    for block in page.blocks:
+        for line in block.lines:
+            for word in line.words:
+                assert word.text is not None
+                assert word.detection_confidence is not None
+                assert word.recognition_confidence is not None
 
 
-@pytest.mark.skip(reason="Временно отключено")
 def test_pipeline_default_initialization():
     """
-    Тест что Pipeline() можно создать без параметров.
-    Должны автоматически инициализироваться EAST и TRBA.
+    Test that Pipeline() can be created without parameters.
+    Should auto-initialize EAST and TRBA.
     """
-    # Создание без параметров
+    # Create without parameters
     pipeline = Pipeline()
 
-    # Проверяем что детектор и распознаватель созданы
+    # Check detector and recognizer are created
     assert pipeline.detector is not None
     assert pipeline.recognizer is not None
 
-    # Проверяем типы (должны быть EAST и TRBA)
+    # Check types (should be EAST and TRBA)
     from manuscript.detectors import EAST
     from manuscript.recognizers import TRBA
 
     assert isinstance(pipeline.detector, EAST)
     assert isinstance(pipeline.recognizer, TRBA)
 
-    # Проверяем что min_text_size установлен по умолчанию
+    # Check default min_text_size
     assert pipeline.min_text_size == 5
 
 
-@pytest.mark.skip(reason="Временно отключено")
 def test_pipeline_partial_initialization():
     """
-    Тест что Pipeline можно создать с одним параметром,
-    второй инициализируется по умолчанию.
+    Test that Pipeline can be created with one parameter,
+    the other is initialized by default.
     """
     from manuscript.detectors import EAST
     from manuscript.recognizers import TRBA
 
-    # Только детектор
+    # Only detector
     custom_detector = DummyDetector()
     pipeline1 = Pipeline(detector=custom_detector)
     assert pipeline1.detector is custom_detector
     assert isinstance(pipeline1.recognizer, TRBA)
 
-    # Только распознаватель
+    # Only recognizer
     custom_recognizer = DummyRecognizer()
     pipeline2 = Pipeline(recognizer=custom_recognizer)
     assert isinstance(pipeline2.detector, EAST)
     assert pipeline2.recognizer is custom_recognizer
+
+
+def test_pipeline_process_batch():
+    """Test process_batch method"""
+    detector = DummyDetector()
+    recognizer = DummyRecognizer()
+    pipeline = Pipeline(detector=detector, recognizer=recognizer)
+
+    # Create multiple test images
+    images = [np.zeros((100, 400, 3), dtype=np.uint8) for _ in range(3)]
+
+    results = pipeline.process_batch(images)
+
+    assert len(results) == 3
+    assert all(isinstance(r, dict) for r in results)
+    assert all("page" in r for r in results)
+
+
+def test_pipeline_process_batch_with_vis():
+    """Test process_batch with visualization"""
+    detector = DummyDetector()
+    recognizer = DummyRecognizer()
+    pipeline = Pipeline(detector=detector, recognizer=recognizer)
+
+    images = [np.zeros((100, 400, 3), dtype=np.uint8) for _ in range(2)]
+
+    results = pipeline.process_batch(images, vis=True)
+
+    assert len(results) == 2
+    for result in results:
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], dict)
+        assert isinstance(result[1], Image.Image)

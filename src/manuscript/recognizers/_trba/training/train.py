@@ -652,15 +652,15 @@ def run_training(cfg: Config, device: str = "cuda"):
             if pretrain_src.lower() == "default":
                 pretrain_src = (
                     "https://github.com/konstantinkozhin/manuscript-ocr/releases/download/"
-                    "v0.1.0/trba_exp_1_64.pth"
+                    "v0.1.0/trba_lite_g1.pth"
                 )
                 logger.info(
-                    "Using default pretrained weights: trba_exp_1_64.pth (GitHub release)"
+                    "Using default pretrained weights: trba_lite_g1.pth (GitHub release)"
                 )
                 logger.info(
                     "Default pretrain config: "
                     "https://github.com/konstantinkozhin/manuscript-ocr/releases/download/"
-                    "v0.1.0/trba_exp_1_64.json"
+                    "v0.1.0/trba_lite_g1.json"
                 )
 
             stats = load_pretrained_weights(
