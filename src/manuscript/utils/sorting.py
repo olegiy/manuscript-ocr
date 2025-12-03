@@ -1,5 +1,3 @@
-"""Sorting and postprocessing utilities for manuscript-ocr."""
-
 from typing import List, Tuple
 
 import numpy as np
@@ -10,10 +8,7 @@ def resolve_intersections(
 ) -> List[Tuple[float, float, float, float]]:
     """
     Resolve intersecting boxes by shrinking them iteratively.
-    
-    This function is useful for cleaning up overlapping detections before
-    applying reading order sorting.
-    
+
     Parameters
     ----------
     boxes : list of tuple
@@ -158,52 +153,6 @@ def sort_boxes_reading_order(
     
     # Flatten to single list
     return [b for ln in lines for b in ln]
-
-
-def sort_boxes_reading_order_with_resolutions(
-    boxes: List[Tuple[float, float, float, float]],
-    y_tol_ratio: float = 0.6,
-    x_gap_ratio: float = np.inf,
-) -> List[List[Tuple[float, float, float, float]]]:
-    """
-    Sort boxes in reading order after resolving intersections, grouped by lines.
-    
-    This function first resolves overlapping boxes by shrinking them, then applies
-    reading order sorting and returns boxes grouped by detected text lines.
-    
-    Parameters
-    ----------
-    boxes : list of tuple
-        List of boxes in format (x_min, y_min, x_max, y_max).
-    y_tol_ratio : float, default=0.6
-        Vertical tolerance for line grouping (see sort_boxes_reading_order).
-    x_gap_ratio : float, default=np.inf
-        Maximum horizontal gap for line continuity (see sort_boxes_reading_order).
-        
-    Returns
-    -------
-    list of list of tuple
-        List of lines, where each line is a list of boxes sorted left-to-right.
-        Lines are sorted top-to-bottom.
-        
-    Examples
-    --------
-    >>> boxes = [(10, 10, 55, 30), (60, 10, 100, 30), (10, 50, 50, 70)]
-    >>> lines = sort_boxes_reading_order_with_resolutions(boxes)
-    >>> len(lines)  # Two lines detected
-    2
-    >>> len(lines[0])  # First line has 2 boxes
-    2
-    
-    Notes
-    -----
-    - First resolves overlaps by iterative shrinking
-    - Groups boxes into lines based on vertical proximity
-    - Within each line, boxes are sorted left-to-right
-    - Returns original (non-shrunk) boxes grouped by lines
-    - DEPRECATED: Use sort_into_lines() instead
-    """
-    return sort_into_lines(boxes, y_tol_ratio=y_tol_ratio, x_gap_ratio=x_gap_ratio)
 
 
 def sort_into_lines(

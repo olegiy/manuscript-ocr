@@ -984,9 +984,8 @@ class TRBA:
             sos_id=stoi["<SOS>"],
             eos_id=stoi["<EOS>"],
             pad_id=stoi["<PAD>"],
-            blank_id=stoi.get("<BLANK>", None),  # ВАЖНО: не путать с пробелом!
-            use_ctc_head=False,  # ONNX export only needs attention head
-            use_attention_head=True,
+            blank_id=stoi.get("<BLANK>", None),
+            use_ctc_head=False,
         )
         
         print(f"   Token IDs:")

@@ -1,6 +1,5 @@
 import os
 from collections import defaultdict
-from typing import Optional
 
 import albumentations as A
 import cv2
@@ -8,12 +7,9 @@ import numpy as np
 import torch
 from albumentations.pytorch import ToTensorV2
 
-# Import unified read_image from common utils
-from ....utils import read_image
-
 
 def build_file_index(roots, exts={".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}):
-    """Построение индекса файлов для быстрого поиска."""
+    """Builds a file index for fast lookup."""
     if isinstance(roots, str):
         roots = [roots]
     index = defaultdict(list)
@@ -29,20 +25,9 @@ def build_file_index(roots, exts={".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tif
     return index
 
 
-def imread_cv2(path: str):
-    """
-    Чтение изображения через OpenCV с поддержкой Unicode путей.
-    
-    .. deprecated:: 
-        Use :func:`manuscript.utils.read_image` instead. This function
-        is kept for backwards compatibility and simply calls read_image.
-    """
-    return read_image(path)
-
-
 def load_charset(charset_path: str):
     """
-    Загрузка символьного словаря из файла формата:
+    Loads the character vocabulary from a file of the format:
         <PAD>
         <SOS>
         <EOS>
@@ -50,7 +35,7 @@ def load_charset(charset_path: str):
         a
         b
         ...
-    Возвращает (itos, stoi).
+    Returns (itos, stoi).
     """
     itos = []
     with open(charset_path, "r", encoding="utf-8") as f:
@@ -64,7 +49,7 @@ def load_charset(charset_path: str):
 
 
 class ResizeAndPadA(A.ImageOnlyTransform):
-    """Кастомная трансформация для изменения размера и добавления отступов."""
+    """Custom transform for resizing and padding."""
     
     def __init__(
         self,
@@ -125,7 +110,7 @@ class ResizeAndPadA(A.ImageOnlyTransform):
 
 
 def pack_attention_targets(texts, stoi, max_len, drop_blank=True):
-    """Упаковка текстовых целей для attention модели."""
+    """Packing text targets for attention model."""
     PAD = stoi["<PAD>"]
     SOS = stoi["<SOS>"]
     EOS = stoi["<EOS>"]
@@ -162,7 +147,7 @@ def pack_attention_targets(texts, stoi, max_len, drop_blank=True):
 
 
 def get_train_transform(params, img_h, img_w):
-    """Создание трансформаций для тренировочных данных."""
+    """Create transformations for training data."""
     return A.Compose(
         [
             ResizeAndPadA(img_h=img_h, img_w=img_w),
@@ -187,7 +172,7 @@ def get_train_transform(params, img_h, img_w):
 
 
 def get_val_transform(img_h, img_w):
-    """Создание трансформаций для валидационных данных."""
+    """Create transformations for validation data."""
     return A.Compose(
         [
             ResizeAndPadA(img_h=img_h, img_w=img_w),
@@ -198,7 +183,7 @@ def get_val_transform(img_h, img_w):
 
 
 def decode_tokens(ids, itos, pad_id, eos_id, blank_id=None):
-    """Декодирование токенов в текст."""
+    """Decoding tokens into text."""
     out = []
     for t in ids:
         t = int(t)

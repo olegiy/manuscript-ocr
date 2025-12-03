@@ -1,78 +1,78 @@
-# Конфигурация TRBA модели
+# TRBA Model Configuration
 
-## Параметры для TRBA (обязательные)
+## Parameters for TRBA (required)
 
-**`img_h`** - Высота входного изображения для модели в пикселях
+**`img_h`** – Height of the input image for the model in pixels
 
-**`img_w`** - Ширина входного изображения для модели в пикселях  
+**`img_w`** – Width of the input image for the model in pixels
 
-**`hidden_size`** - Размер скрытого слоя в RNN части модели
+**`hidden_size`** – Hidden layer size in the RNN part of the model
 
-## Параметры для обучения (обязательные при обучении)
+## Training parameters (required for training)
 
-**`charset_path`** - Путь к файлу с алфавитом символов
+**`charset_path`** – Path to the file containing the character set
 
-## Дополнительные параметры
+## Additional parameters
 
-**`max_len`** - Максимальная длина распознаваемой последовательности символов
+**`max_len`** – Maximum length of the recognized character sequence
 
-**`encoding`** - Кодировка для обработки текстовых данных
+**`encoding`** – Text data encoding
 
-## Параметры для обучения
+## Training parameters
 
-**`train_csvs`** - Пути к CSV файлам с метками для обучения
+**`train_csvs`** – Paths to CSV files with labels for training
 
-**`train_roots`** - Корневые папки с изображениями для обучения
+**`train_roots`** – Root folders with images for training
 
-**`val_csvs`** - Пути к CSV файлам с метками для валидации
+**`val_csvs`** – Paths to CSV files with validation labels
 
-**`val_roots`** - Корневые папки с изображениями для валидации
+**`val_roots`** – Root folders with images for validation
 
-**`batch_size`** - Размер батча для обучения
+**`batch_size`** – Batch size for training
 
-**`epochs`** - Максимальное количество эпох обучения
+**`epochs`** – Maximum number of training epochs
 
-**`lr`** - Скорость обучения (learning rate)
+**`lr`** – Learning rate
 
-**`optimizer`** - Алгоритм оптимизации ("Adam", "SGD", "AdamW")
+**`optimizer`** – Optimization algorithm ("Adam", "SGD", "AdamW")
 
-**`scheduler`** - Планировщик изменения learning rate
+**`scheduler`** – Learning rate scheduler
 
-**`weight_decay`** - Коэффициент регуляризации L2
+**`weight_decay`** – L2 regularization coefficient
 
-**`momentum`** - Коэффициент momentum для SGD оптимизатора
+**`momentum`** – Momentum coefficient for the SGD optimizer
 
-**`shift_limit`** - Максимальный сдвиг изображения при аугментации
+**`shift_limit`** – Maximum image shift during augmentation
 
-**`scale_limit`** - Максимальное масштабирование при аугментации
+**`scale_limit`** – Maximum image scaling during augmentation
 
-**`rotate_limit`** - Максимальный поворот в градусах при аугментации
+**`rotate_limit`** – Maximum rotation in degrees for augmentation
 
-**`p_ShiftScaleRotate`** - Вероятность применения геометрических трансформаций
+**`p_ShiftScaleRotate`** – Probability of applying geometric transformations
 
-**`brightness_limit`** - Изменение яркости при аугментации
+**`brightness_limit`** – Brightness variation for augmentation
 
-**`contrast_limit`** - Изменение контрастности при аугментации
+**`contrast_limit`** – Contrast variation for augmentation
 
-**`p_BrightnessContrast`** - Вероятность применения цветовых трансформаций
+**`p_BrightnessContrast`** – Probability of applying color transformations
 
-**`invert_p`** - Вероятность инверсии цветов
+**`invert_p`** – Probability of color inversion
 
-**`train_proportions`** - Пропорции для смешивания нескольких датасетов
+**`train_proportions`** – Mixing proportions for multiple datasets
 
-**`val_size`** - Количество примеров для валидации
+**`val_size`** – Number of validation samples
 
-**`num_workers`** - Количество процессов для загрузки данных
+**`num_workers`** – Number of worker processes for data loading
 
-**`resume_path`** - Путь к чекпойнту для продолжения обучения
+**`resume_path`** – Path to the checkpoint for training resume
 
-**`exp_dir`** - Название папки для сохранения результатов эксперимента
+**`exp_dir`** – Folder name for saving experiment results
 
-**`seed`** - Зерно для генератора случайных чисел
+**`seed`** – Random seed
 
-**`eval_every`** - Частота валидации в эпохах
+**`eval_every`** – Validation frequency in epochs
 
-## Пример полного config.json файла
+## Example of a full config.json file
 
 ```json
 {
@@ -123,9 +123,9 @@
 }
 ```
 
-## Пример charset.txt файла
+## Example of a charset.txt file
 
-**Важно**: Первые 4 строки обязательны и должны быть именно в таком порядке, затем можно добавлять нужные символы.
+**Important:** The first 4 lines are mandatory and must appear exactly in this order, then you may add any characters you need.
 
 ```plaintext
 <PAD>
@@ -144,16 +144,50 @@ c
 ,
 ```
 
-**Обязательные служебные токены:**
-- `<PAD>` - токен заполнения (padding)
-- `<SOS>` - токен начала последовательности (Start of Sequence)  
-- `<EOS>` - токен конца последовательности (End of Sequence)
-- ` ` - пробел (4-я строка, обязательна)
+**Mandatory special tokens:**
 
-**Символы для распознавания:**
-- Латинские буквы (a-z, A-Z)
-- Цифры (0-9)  
-- Кириллические буквы (а-я, А-Я)
-- Знаки препинания и специальные символы
+* `<PAD>` – padding token
+* `<SOS>` – start of sequence token
+* `<EOS>` – end of sequence token
+* ` ` – space (4th line, required)
 
-Можно настроить под свой алфавит, добавляя или удаляя символы после первых 4 обязательных строк.
+**Characters for recognition:**
+
+* Latin letters (a–z, A–Z)
+* Digits (0–9)
+* Cyrillic letters (а–я, А–Я)
+* Punctuation marks and special symbols
+
+You may customize the alphabet by adding or removing characters after the first 4 required lines.
+
+# Weight Freezing Policies (fine-tuning)
+
+* Parameters are accepted in `TRBA.train(...)` and/or in `config.json`:
+
+  * `freeze_cnn`: "none" | "partial" | "full"
+  * `freeze_enc_rnn`: "none" | "partial" | "full"
+  * `freeze_attention`: "none" | "partial" | "full"
+
+Semantics of **partial**:
+
+* **CNN**: layers `conv0`, `layer1`, `layer2`, `layer3` are frozen; layers `layer4` and `conv_out` remain trainable.
+* **enc_rnn**: the first BiLSTM block is frozen, the last one is trainable.
+* **attention**: `attention_cell` is frozen, `generator` remains trainable.
+
+Examples:
+
+```python
+from manuscript.recognizers import TRBA
+
+summary = TRBA.train(
+    train_csvs=["train.tsv"],
+    train_roots=["train"],
+    val_csvs=["val.tsv"],
+    val_roots=["val"],
+    freeze_cnn="partial",
+    freeze_enc_rnn="none",
+    freeze_attention="full",
+)
+```
+
+These fields can also be specified inside `config.json` when training is launched using a config file.

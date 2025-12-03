@@ -4,26 +4,27 @@
 
 ```python
 from manuscript.detectors import EAST
+from manuscript.utils import visualize_page, read_image
 
 # Создаём детектор с настройками по умолчанию.
 detector = EAST()
 
-# Запускаем предикт. Если vis=True — вернётся изображение с визуализацией боксов.
-result = detector.predict("data/samples/page_001.jpg", vis=True)
+# Запускаем предикт
+result = detector.predict("data/samples/page_001.jpg")
 
-# Результат содержит объект Page (разметка слов и блоков),
-# а также опциональную визуализацию.
+# Результат содержит объект Page (разметка слов и блоков)
 page = result["page"]
-vis_image = result["vis_image"]
 
-# Покажем изображение с боксами, если оно возвращено.
-if vis_image is not None:
-    vis_image.show()
+# Для визуализации используем отдельную функцию
+img = read_image("data/samples/page_001.jpg")
+vis_image = visualize_page(img, page)
+vis_image.show()
 
-# Перебираем все блоки и слова и выводим текст + confidence
+# Перебираем все блоки и слова и выводим confidence
 for block in page.blocks:
-    for word in block.words:
-        print(word.text, word.detection_confidence)
+    for line in block.lines:
+        for word in line.words:
+            print(word.detection_confidence)
 ```
 
 ### **2. Загрузка собственных весов и изменение параметров предобработки**
@@ -45,7 +46,7 @@ detector = EAST(
 )
 
 # Можно запросить raw карты сети: score_map (с вероятностями) и geo_map (геометрия боксов)
-result = detector.predict("data/custom/page.png", vis=False, return_maps=True)
+result = detector.predict("data/custom/page.png", return_maps=True)
 
 score_map = result["score_map"]
 geo_map = result["geo_map"]

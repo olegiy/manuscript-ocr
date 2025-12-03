@@ -70,8 +70,7 @@ def convert_weights(old_weights_path, config_path, charset_path, output_path):
         pad_id=stoi['<PAD>'],
         blank_id=stoi.get('<BLANK>', None),
         enc_dropout_p=0.1,
-        use_ctc_head=False,  # Старая модель не имела CTC head
-        use_attention_head=True,
+        use_ctc_head=False,
     )
     
     print(f"\nLoading old weights from: {old_weights_path}")

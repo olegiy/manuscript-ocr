@@ -13,16 +13,34 @@ import torch
 import cv2
 import numpy as np
 from PIL import Image
-import Levenshtein
 from tqdm import tqdm
+
+# Levenshtein only for detailed error analysis
+try:
+    import Levenshtein
+    HAS_LEVENSHTEIN = True
+except ImportError:
+    HAS_LEVENSHTEIN = False
+    print("Warning: python-Levenshtein not installed. Detailed error analysis will be limited.")
 
 from manuscript.recognizers._trba.model.model import TRBAModel
 from manuscript.recognizers._trba.data.transforms import load_charset, get_val_transform
 from manuscript.recognizers._trba.training.metrics import (
-    character_error_rate,
-    word_error_rate,
+    compute_cer,
+    compute_wer,
     compute_accuracy,
 )
+
+
+# Wrapper functions for single-item compatibility
+def character_error_rate(reference: str, hypothesis: str) -> float:
+    """Single-item CER for compatibility."""
+    return compute_cer([reference], [hypothesis])
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Single-item WER for compatibility."""
+    return compute_wer([reference], [hypothesis])
 
 # ============================================
 # КОНФИГУРАЦИЯ
@@ -126,8 +144,7 @@ model = TRBAModel(
     eos_id=stoi["<EOS>"],
     pad_id=stoi["<PAD>"],
     blank_id=stoi.get("<BLANK>", None),
-    use_ctc_head=False,  # Только attention для инференса
-    use_attention_head=True,
+    use_ctc_head=False,
 )
 
 print(f"   Loading weights from {WEIGHTS_PATH}...")

@@ -1,5 +1,3 @@
-"""Metrics and evaluation utilities for manuscript-ocr."""
-
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
@@ -8,6 +6,7 @@ from tqdm import tqdm
 from .geometry import box_iou
 
 
+# может не нужна
 def match_boxes(
     pred_boxes: List[Tuple[float, float, float, float]],
     gt_boxes: List[Tuple[float, float, float, float]],
@@ -43,12 +42,6 @@ def match_boxes(
     >>> tp, fp, fn = match_boxes(pred, gt, iou_threshold=0.5)
     >>> (tp, fp, fn)
     (1, 1, 0)
-    
-    Notes
-    -----
-    - Each prediction can match at most one ground truth
-    - Each ground truth can match at most one prediction
-    - Higher IoU matches are prioritized
     """
     # Handle edge cases
     if len(gt_boxes) == 0 and len(pred_boxes) == 0:
@@ -89,7 +82,7 @@ def match_boxes(
     
     return tp, fp, fn
 
-
+# может не нужна
 def compute_f1_score(
     true_positives: int,
     false_positives: int,
@@ -166,7 +159,7 @@ def _evaluate_image_worker(args):
     
     return results
 
-
+# может не нужна будет (потом)
 def evaluate_dataset(
     predictions: Dict[str, List[Tuple[float, float, float, float]]],
     ground_truths: Dict[str, List[Tuple[float, float, float, float]]],

@@ -11,7 +11,6 @@ from .utils import (
     visualize_page,
     read_image,
     sort_into_lines,
-    sort_boxes_reading_order_with_resolutions,  # deprecated, keeping for now
 )
 
 
@@ -109,7 +108,9 @@ class Pipeline:
                 x_max, y_max = np.max(poly, axis=0)
                 boxes.append((x_min, y_min, x_max, y_max))
 
-            sorted_boxes = sort_boxes_reading_order_with_resolutions(boxes)
+            lines = sort_into_lines(boxes)
+            # Flatten lines back to a single list
+            sorted_boxes = [box for line in lines for box in line]
 
             new_order = []
             for bx in sorted_boxes:

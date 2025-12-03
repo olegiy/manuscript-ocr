@@ -1,5 +1,3 @@
-"""I/O utilities for manuscript-ocr."""
-
 from pathlib import Path
 from typing import Union
 
@@ -11,10 +9,7 @@ from PIL import Image
 def read_image(img_or_path: Union[str, Path, bytes, np.ndarray, Image.Image]) -> np.ndarray:
     """
     Universal image reading with support for multiple input types.
-    
-    This function consolidates image reading logic from EAST and TRBA modules,
-    providing robust handling of different input formats including Unicode paths.
-    
+
     Parameters
     ----------
     img_or_path : str, Path, bytes, np.ndarray, or PIL.Image
@@ -55,13 +50,6 @@ def read_image(img_or_path: Union[str, Path, bytes, np.ndarray, Image.Image]) ->
     
     >>> # Pass through numpy array
     >>> img = read_image(existing_array)
-    
-    Notes
-    -----
-    - Uses `np.fromfile()` for path reading to support Unicode characters
-    - Falls back to PIL for non-standard image formats
-    - Always returns RGB format (converts BGR from OpenCV)
-    - Converts grayscale and RGBA to RGB automatically
     """
     # File path (str or Path) - TRBA method with Unicode support
     if isinstance(img_or_path, (str, Path)):
@@ -115,8 +103,6 @@ def tensor_to_image(
     """
     Convert PyTorch tensor to numpy image array.
     
-    Handles both single images and batches, with optional denormalization.
-    
     Parameters
     ----------
     tensor : torch.Tensor
@@ -158,9 +144,7 @@ def tensor_to_image(
     ...     normalized,
     ...     denormalize={'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}
     ... )
-    """
-    import torch
-    
+    """    
     # Detach from computation graph and move to CPU
     if tensor.requires_grad:
         tensor = tensor.detach()

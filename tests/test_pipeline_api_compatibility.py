@@ -60,7 +60,7 @@ class DummyDetector:
 
         # Возвращаем в разных форматах в зависимости от настройки
         if self.return_type == "dict":
-            return {"page": page, "vis_image": None, "score_map": None, "geo_map": None}
+            return {"page": page, "score_map": None, "geo_map": None}
         elif self.return_type == "tuple":
             return (page, None)
         else:  # "page"

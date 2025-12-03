@@ -1,22 +1,18 @@
 import csv
 import os
 import random
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple, Union
-from collections import Counter, defaultdict
 
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from ....utils import read_image
 from .transforms import (
     build_file_index,
-    imread_cv2,
-    load_charset,
     pack_attention_targets,
-    get_train_transform,
-    get_val_transform,
-    decode_tokens
 )
 
 
@@ -77,7 +73,7 @@ class OCRDatasetAttn(Dataset):
             print("[OCRDatasetAttn] Lazy image validation is enabled; unreadable images will be skipped during the first access.")
 
         if not self.samples:
-            raise RuntimeError(f"В датасете {csv_path} не осталось валидных примеров!")
+            raise RuntimeError(f"No valid samples remain in the dataset {csv_path}!")
 
     def __len__(self):
         return len(self.samples)
@@ -89,9 +85,9 @@ class OCRDatasetAttn(Dataset):
         if not self._validate_image:
             abs_path, label = self.samples[idx]
             try:
-                img = imread_cv2(abs_path)
+                img = read_image(abs_path)
             except Exception as e:
-                raise IndexError(f"Ошибка чтения изображения {abs_path}: {e}") from e
+                raise IndexError(f"Error reading image {abs_path}: {e}") from e
 
             if self.transform:
                 augmented = self.transform(image=img)
@@ -111,7 +107,7 @@ class OCRDatasetAttn(Dataset):
                 continue
 
             try:
-                img = imread_cv2(abs_path)
+                img = read_image(abs_path)
                 self._checked_mask[current_idx] = True
             except Exception as e:
                 self._mark_sample_invalid(current_idx, abs_path, e)
@@ -175,7 +171,6 @@ class OCRDatasetAttn(Dataset):
 
     @staticmethod
     def _norm_label(s: str) -> str:
-
         return s.replace("\u00A0", " ").strip().replace("\ufeff", "")
 
     @staticmethod
@@ -290,15 +285,15 @@ class OCRDatasetAttn(Dataset):
                     print(f"  - {k}: {cnt}")
                     ex = self._examples[k]
                     if ex:
-                        print(f"    примеры: {ex[:self._EX_MAX]}")
+                        print(f"    examples: {ex[:self._EX_MAX]}")
             if self._reasons["charset"] > 0 and self._missing_chars:
-                print("  Отсутствующие символы (TOP 30):")
+                print("  Missing characters (TOP 30):")
                 for ch, cnt in self._missing_chars.most_common(30):
-                    print(f"    '{ch}' (U+{ord(ch):04X}, repr={repr(ch)}): {cnt} раз(а)")
+                    print(f"    '{ch}' (U+{ord(ch):04X}, repr={repr(ch)}): {cnt} times")
 
 class ProportionalBatchSampler:
     def __init__(self, datasets, batch_size, proportions):
-        assert abs(sum(proportions) - 1.0) < 1e-6, "Пропорции должны давать сумму = 1"
+        assert abs(sum(proportions) - 1.0) < 1e-6, "Proportions must sum to 1"
         self.datasets = datasets
         self.batch_size = batch_size
         self.proportions = proportions

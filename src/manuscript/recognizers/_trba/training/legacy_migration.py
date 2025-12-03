@@ -51,7 +51,6 @@ def build_legacy_key_mapping() -> Dict[str, str]:
 
 def migrate_legacy_weights(
     old_state_dict: Dict[str, torch.Tensor],
-    use_attention_head: bool = True,
     use_ctc_head: bool = False,
 ) -> Dict[str, torch.Tensor]:
     """
@@ -59,7 +58,6 @@ def migrate_legacy_weights(
     
     Args:
         old_state_dict: Старый state_dict
-        use_attention_head: Загрузить attention decoder
         use_ctc_head: В старых весах CTC не было
         
     Returns:
@@ -76,10 +74,6 @@ def migrate_legacy_weights(
             if old_key.startswith(old_pattern):
                 new_key = old_key.replace(old_pattern, new_pattern, 1)
                 break
-        
-        # Пропускаем attention веса если не используем attention head
-        if not use_attention_head and "attention_decoder" in new_key:
-            continue
             
         new_state_dict[new_key] = tensor
     
@@ -128,7 +122,6 @@ def load_legacy_trba_weights(
     # Мигрируем ключи
     new_state = migrate_legacy_weights(
         old_state,
-        use_attention_head=model.use_attention_head,
         use_ctc_head=model.use_ctc_head,
     )
     

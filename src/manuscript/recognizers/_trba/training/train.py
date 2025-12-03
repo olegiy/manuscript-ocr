@@ -27,7 +27,7 @@ from ..data.transforms import (
     get_val_transform,
     load_charset,
 )
-from .metrics import character_error_rate, compute_accuracy, word_error_rate
+from .metrics import compute_cer, compute_wer, compute_accuracy
 from ..model.model import TRBAModel
 from .utils import (
     load_checkpoint,
@@ -551,10 +551,6 @@ def run_training(cfg: Config, device: str = "cuda"):
     val_size = getattr(cfg, "val_size", 3000)
     num_workers = getattr(cfg, "num_workers", 0)
 
-    # CTC всегда используется при обучении для стабилизации
-    # При инференсе используется только attention decoder
-    decoder_head = "both"  # Фиксированное значение
-
     # CTC loss weight для стабилизации начального обучения
     ctc_weight_initial = getattr(cfg, "ctc_weight", 0.3)
     ctc_weight_decay_epochs = getattr(
@@ -621,9 +617,8 @@ def run_training(cfg: Config, device: str = "cuda"):
     cnn_out_channels = getattr(cfg, "cnn_out_channels", 512)
     cnn_backbone = getattr(cfg, "cnn_backbone", "seresnet31")
 
-    # decoder_head и ctc_weight уже определены выше
-    use_ctc_head = decoder_head == "both"
-    use_attention_head = True
+    # CTC всегда используется при обучении для стабилизации
+    use_ctc_head = True
 
     model = TRBAModel(
         num_classes=num_classes,
@@ -639,7 +634,6 @@ def run_training(cfg: Config, device: str = "cuda"):
         pad_id=PAD,
         blank_id=BLANK,
         use_ctc_head=use_ctc_head,
-        use_attention_head=use_attention_head,
     ).to(device)
 
     pretrain_src = getattr(cfg, "pretrain_weights", "default")
@@ -1062,8 +1056,8 @@ def run_training(cfg: Config, device: str = "cuda"):
 
     # --- training loop ---
     for epoch in range(start_epoch, epochs + 1):
-        # Вычисляем текущий CTC weight с затуханием (только для decoder_head="both")
-        if decoder_head == "both":
+        # Вычисляем текущий CTC weight с затуханием
+        if epoch < ctc_weight_decay_epochs:
             ctc_weight = get_ctc_weight_for_epoch(
                 epoch,
                 initial_weight=ctc_weight_initial,
@@ -1093,36 +1087,24 @@ def run_training(cfg: Config, device: str = "cuda"):
                     text=text_in,
                     is_train=True,
                     batch_max_length=max_len,
-                    mode=decoder_head,  # "attention" или "both"
                 )
 
-                # Compute loss based on decoder_head
+                # Compute dual loss (attention + CTC)
                 loss = torch.tensor(0.0, device=device)
                 attn_loss_val = torch.tensor(0.0, device=device)
                 ctc_loss_val = torch.tensor(0.0, device=device)
 
-                if decoder_head == "attention":
-                    # Pure attention mode
-                    attn_logits = result["attention_logits"]
-                    attn_loss_val = criterion(
-                        attn_logits.reshape(-1, attn_logits.size(-1)),
-                        target_y.reshape(-1),
-                    )
-                    loss = attn_loss_val
+                attn_logits = result["attention_logits"]
+                ctc_logits = result["ctc_logits"]
 
-                elif decoder_head == "both":
-                    # Dual loss mode
-                    attn_logits = result["attention_logits"]
-                    ctc_logits = result["ctc_logits"]
+                attn_loss_val = criterion(
+                    attn_logits.reshape(-1, attn_logits.size(-1)),
+                    target_y.reshape(-1),
+                )
+                ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
 
-                    attn_loss_val = criterion(
-                        attn_logits.reshape(-1, attn_logits.size(-1)),
-                        target_y.reshape(-1),
-                    )
-                    ctc_loss_val = model.compute_ctc_loss(ctc_logits, target_y, lengths)
-
-                    # Weighted combination
-                    loss = attn_loss_val * (1 - ctc_weight) + ctc_loss_val * ctc_weight
+                # Weighted combination
+                loss = (1.0 - ctc_weight) * attn_loss_val + ctc_weight * ctc_loss_val
 
             scaler.scale(loss).backward()
 
@@ -1142,10 +1124,8 @@ def run_training(cfg: Config, device: str = "cuda"):
             total_ctc_loss += ctc_loss_scalar
 
             writer.add_scalar("Loss/train_step", loss_val, global_step)
-            if use_attention_head:
-                writer.add_scalar("Loss/train_attn_step", attn_loss_scalar, global_step)
-            if use_ctc_head:
-                writer.add_scalar("Loss/train_ctc_step", ctc_loss_scalar, global_step)
+            writer.add_scalar("Loss/train_attn_step", attn_loss_scalar, global_step)
+            writer.add_scalar("Loss/train_ctc_step", ctc_loss_scalar, global_step)
             writer.add_scalar("LR", optimizer.param_groups[0]["lr"], global_step)
             global_step += 1
 
@@ -1171,10 +1151,8 @@ def run_training(cfg: Config, device: str = "cuda"):
         val_wer = None
 
         writer.add_scalar("Loss/train_epoch", avg_train_loss, epoch)
-        if use_attention_head:
-            writer.add_scalar("Loss/train_attn_epoch", avg_attn_loss, epoch)
-        if use_ctc_head:
-            writer.add_scalar("Loss/train_ctc_epoch", avg_ctc_loss, epoch)
+        writer.add_scalar("Loss/train_attn_epoch", avg_attn_loss, epoch)
+        writer.add_scalar("Loss/train_ctc_epoch", avg_ctc_loss, epoch)
 
         if should_eval:
             model.eval()
@@ -1190,8 +1168,8 @@ def run_training(cfg: Config, device: str = "cuda"):
                 mode_name: {
                     "total_correct": 0,
                     "total_predictions": 0,
-                    "total_cer_sum": 0.0,
-                    "total_wer_sum": 0.0,
+                    "all_refs": [],
+                    "all_hyps": [],
                 }
                 for mode_name in eval_modes
             }
@@ -1213,42 +1191,26 @@ def run_training(cfg: Config, device: str = "cuda"):
                         target_y = target_y.to(device, non_blocking=pin_memory)
 
                         with amp.autocast():
-                            # Loss calculation based on decoder_head
-                            if decoder_head == "attention":
-                                result = model(
-                                    imgs,
-                                    text=text_in,
-                                    is_train=True,
-                                    batch_max_length=max_len,
-                                    mode="attention",
-                                )
-                                logits_tf = result["attention_logits"]
-                                val_loss = criterion(
-                                    logits_tf.reshape(-1, logits_tf.size(-1)),
-                                    target_y.reshape(-1),
-                                )
-                            else:  # both
-                                result = model(
-                                    imgs,
-                                    text=text_in,
-                                    is_train=True,
-                                    batch_max_length=max_len,
-                                    mode="both",
-                                )
-                                attn_logits = result["attention_logits"]
-                                ctc_logits = result["ctc_logits"]
+                            result = model(
+                                imgs,
+                                text=text_in,
+                                is_train=True,
+                                batch_max_length=max_len,
+                            )
+                            attn_logits = result["attention_logits"]
+                            ctc_logits = result["ctc_logits"]
 
-                                attn_loss_val = criterion(
-                                    attn_logits.reshape(-1, attn_logits.size(-1)),
-                                    target_y.reshape(-1),
-                                )
-                                ctc_loss_val = model.compute_ctc_loss(
-                                    ctc_logits, target_y, lengths
-                                )
-                                val_loss = (
-                                    attn_loss_val * (1 - ctc_weight)
-                                    + ctc_loss_val * ctc_weight
-                                )
+                            attn_loss_val = criterion(
+                                attn_logits.reshape(-1, attn_logits.size(-1)),
+                                target_y.reshape(-1),
+                            )
+                            ctc_loss_val = model.compute_ctc_loss(
+                                ctc_logits, target_y, lengths
+                            )
+                            val_loss = (
+                                attn_loss_val * (1 - ctc_weight)
+                                + ctc_loss_val * ctc_weight
+                            )
 
                         total_val_loss_single += float(val_loss.item())
 
@@ -1258,7 +1220,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                                 imgs,
                                 is_train=False,
                                 batch_max_length=max_len,
-                                mode=mode_cfg["mode"],
                             )
                             decoder_type = mode_cfg["decoder"]
                             if decoder_type == "attention":
@@ -1295,12 +1256,8 @@ def run_training(cfg: Config, device: str = "cuda"):
 
                 for mode_name, hyps in hyps_single.items():
                     val_acc_single = compute_accuracy(refs_single, hyps)
-                    val_cer_single = sum(
-                        character_error_rate(r, h) for r, h in zip(refs_single, hyps)
-                    ) / max(1, len(refs_single))
-                    val_wer_single = sum(
-                        word_error_rate(r, h) for r, h in zip(refs_single, hyps)
-                    ) / max(1, len(refs_single))
+                    val_cer_single = compute_cer(refs_single, hyps)
+                    val_wer_single = compute_wer(refs_single, hyps)
 
                     metric_suffix = (
                         f"/val_set_{i}"
@@ -1315,12 +1272,10 @@ def run_training(cfg: Config, device: str = "cuda"):
                     correct_single = sum(1 for r, h in zip(refs_single, hyps) if r == h)
                     stats["total_correct"] += correct_single
                     stats["total_predictions"] += len(refs_single)
-                    stats["total_cer_sum"] += sum(
-                        character_error_rate(r, h) for r, h in zip(refs_single, hyps)
-                    )
-                    stats["total_wer_sum"] += sum(
-                        word_error_rate(r, h) for r, h in zip(refs_single, hyps)
-                    )
+                    
+                    # Accumulate for aggregate metrics
+                    stats["all_refs"].extend(refs_single)
+                    stats["all_hyps"].extend(hyps)
 
                 total_val_loss += total_val_loss_single
                 total_samples += len(val_loader_single)
@@ -1333,11 +1288,15 @@ def run_training(cfg: Config, device: str = "cuda"):
             def _finalize(mode_name: str):
                 stats = aggregate_mode_stats[mode_name]
                 total_pred = max(1, stats["total_predictions"])
-                return (
-                    stats["total_correct"] / total_pred,
-                    stats["total_cer_sum"] / total_pred,
-                    stats["total_wer_sum"] / total_pred,
-                )
+                acc = stats["total_correct"] / total_pred
+                
+                # Compute CER and WER on all accumulated predictions
+                all_refs = stats["all_refs"]
+                all_hyps = stats["all_hyps"]
+                cer = compute_cer(all_refs, all_hyps) if all_refs else 0.0
+                wer = compute_wer(all_refs, all_hyps) if all_refs else 0.0
+                
+                return acc, cer, wer
 
             # Метрики только для attention decoder
             primary_mode_name = "attention"
@@ -1449,7 +1408,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                     "cnn_in_channels": cnn_in_channels,
                     "cnn_out_channels": cnn_out_channels,
                     "cnn_backbone": cnn_backbone,
-                    "decoder_head": decoder_head,
                     "ctc_weight": ctc_weight,
                     "charset_path": charset_path,
                     "train_csvs": train_csvs,
@@ -1492,7 +1450,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
                         "cnn_backbone": cnn_backbone,
-                        "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
                         "train_csvs": train_csvs,
@@ -1536,7 +1493,6 @@ def run_training(cfg: Config, device: str = "cuda"):
                         "cnn_in_channels": cnn_in_channels,
                         "cnn_out_channels": cnn_out_channels,
                         "cnn_backbone": cnn_backbone,
-                        "decoder_head": decoder_head,
                         "ctc_weight": ctc_weight,
                         "charset_path": charset_path,
                         "train_csvs": train_csvs,

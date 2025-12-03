@@ -12,7 +12,6 @@ from .geometry import (
 # Visualization utilities
 from .visualization import (
     draw_quads,
-    draw_boxes,
     visualize_page,
 )
 
@@ -20,7 +19,6 @@ from .visualization import (
 from .sorting import (
     resolve_intersections,
     sort_boxes_reading_order,
-    sort_boxes_reading_order_with_resolutions,  # deprecated, use sort_into_lines
     sort_into_lines,
 )
 
@@ -49,7 +47,6 @@ __all__ = [
     # Sorting/Postprocessing
     "resolve_intersections",
     "sort_boxes_reading_order",
-    "sort_boxes_reading_order_with_resolutions",  # deprecated
     "sort_into_lines",
     # Metrics
     "match_boxes",

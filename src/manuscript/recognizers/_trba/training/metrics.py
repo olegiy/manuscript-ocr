@@ -1,33 +1,83 @@
-import Levenshtein as lev
-from jiwer import wer as jiwer_wer
+"""
+Text recognition metrics using HuggingFace Evaluate library.
+
+This module provides standard metrics for evaluating OCR/text recognition:
+- CER (Character Error Rate)
+- WER (Word Error Rate)  
+- Accuracy (exact match)
+"""
+
+import evaluate
 from typing import List
 
 
-def character_error_rate(reference: str, hypothesis: str) -> float:
-    """
-    Вычисляет Character Error Rate (CER):
-    CER = edit_distance_chars / len(reference)
-    """
-    if len(reference) == 0:
-        return float("inf") if len(hypothesis) > 0 else 0.0
-    dist = lev.distance(reference, hypothesis)
-    return dist / len(reference)
+# Load metrics once at module level for efficiency
+_cer_metric = None
+_wer_metric = None
 
 
-def word_error_rate(reference: str, hypothesis: str) -> float:
-    """
-    Вычисляет Word Error Rate (WER) с помощью библиотеки jiwer.
-    WER = количество ошибок на уровне слов / число слов в reference
-    """
-    return jiwer_wer(reference, hypothesis)
+def get_cer_metric():
+    """Lazy load CER metric."""
+    global _cer_metric
+    if _cer_metric is None:
+        _cer_metric = evaluate.load("cer")
+    return _cer_metric
 
 
-def compute_accuracy(references: List[str], hypotheses: List[str]) -> float:
+def get_wer_metric():
+    """Lazy load WER metric."""
+    global _wer_metric
+    if _wer_metric is None:
+        _wer_metric = evaluate.load("wer")
+    return _wer_metric
+
+
+def compute_cer(references: List[str], predictions: List[str]) -> float:
     """
-    Простая точность: доля точных совпадений (prediction == reference).
+    Compute Character Error Rate using HuggingFace evaluate.
+    
+    Args:
+        references: List of ground truth strings
+        predictions: List of predicted strings
+        
+    Returns:
+        CER value (lower is better)
     """
-    total = len(references)
-    if total == 0:
+    if len(references) == 0:
         return 0.0
-    hits = sum(1 for r, h in zip(references, hypotheses) if r == h)
-    return hits / total
+    metric = get_cer_metric()
+    return metric.compute(predictions=predictions, references=references)
+
+
+def compute_wer(references: List[str], predictions: List[str]) -> float:
+    """
+    Compute Word Error Rate using HuggingFace evaluate.
+    
+    Args:
+        references: List of ground truth strings
+        predictions: List of predicted strings
+        
+    Returns:
+        WER value (lower is better)
+    """
+    if len(references) == 0:
+        return 0.0
+    metric = get_wer_metric()
+    return metric.compute(predictions=predictions, references=references)
+
+
+def compute_accuracy(references: List[str], predictions: List[str]) -> float:
+    """
+    Compute exact match accuracy.
+    
+    Args:
+        references: List of ground truth strings
+        predictions: List of predicted strings
+        
+    Returns:
+        Accuracy in range [0, 1] (higher is better)
+    """
+    if len(references) == 0:
+        return 0.0
+    return sum(r == p for r, p in zip(references, predictions)) / len(references)
+

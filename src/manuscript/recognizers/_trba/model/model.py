@@ -1,8 +1,8 @@
+from typing import Any, Dict, Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Dict, Any
-from pathlib import Path
 
 from .seresnet31 import SEResNet31
 from .seresnetlite31 import SEResNet31Lite
@@ -15,8 +15,6 @@ CNN_BACKBONES = {
 
 
 class BidirectionalLSTM(nn.Module):
-    """BiLSTM encoder layer - ONNX compatible."""
-
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.rnn = nn.LSTM(
@@ -32,19 +30,14 @@ class BidirectionalLSTM(nn.Module):
 
 class TRBAONNXWrapper(nn.Module):
     """
-    ONNX-friendly wrapper для TRBA модели.
-    
-    Особенности:
-    - Фиксированная длина декодирования (max_length шагов)
-    - Greedy decoding (без beam search)
-    - Только attention декодер (CTC только для обучения)
+    ONNX wrapper for TRBA model.
     """
     
     def __init__(self, trba_model, max_length: int = 40):
         """
         Args:
             trba_model: TRBAModel instance
-            max_length: Максимальная длина декодирования
+            max_length: Maximum decoding length
         """
         super().__init__()
         self.model = trba_model
@@ -53,10 +46,10 @@ class TRBAONNXWrapper(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: [B, 3, H, W] - входные изображения
+            x: [B, 3, H, W] - input images
             
         Returns:
-            logits: [B, max_length, num_classes] - логиты для каждой позиции
+            logits: [B, max_length, num_classes] - logits for each position
         """
         logits, _ = self.model.forward_attention(
             x,
@@ -69,8 +62,6 @@ class TRBAONNXWrapper(nn.Module):
 
 
 class AttentionCell(nn.Module):
-    """Attention cell with LSTM - ONNX compatible."""
-
     def __init__(self, input_size, hidden_size, num_embeddings, dropout_p=0.1):
         super().__init__()
         self.i2h = nn.Linear(input_size, hidden_size, bias=False)
@@ -156,33 +147,33 @@ class AttentionDecoder(nn.Module):
         self, batch_H: torch.Tensor, batch_max_length: int = 25, onnx_mode: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Greedy декодирование.
+        Greedy decoding.
 
         Args:
             batch_H: [B, W, hidden_size] encoder output
-            batch_max_length: максимальная длина последовательности
-            onnx_mode: если True, всегда декодирует max_length шагов (для ONNX)
-                      если False, останавливается при EOS (для PyTorch)
+            batch_max_length: maximum sequence length
+            onnx_mode: if True, always decodes max_length steps (for ONNX)
+                   if False, stops at EOS (for PyTorch)
 
         Returns:
-            probs: [B, T, num_classes] логиты
-            preds: [B, T] предсказанные токены
+            probs: [B, T, num_classes] logits
+            preds: [B, T] predicted tokens
         """
         B = batch_H.size(0)
         device = batch_H.device
 
-        # Инициализация скрытых состояний
+        # Initialize hidden states
         h = torch.zeros(B, self.hidden_size, device=device)
         c = torch.zeros(B, self.hidden_size, device=device)
         hidden = (h, c)
 
-        # Начинаем с SOS токена
+        # Start with SOS token
         targets = torch.full((B,), self.sos_id, dtype=torch.long, device=device)
 
         all_probs = []
         all_preds = []
 
-        # Декодирование
+        # Decoding
         max_steps = batch_max_length if onnx_mode else (batch_max_length + 1)
 
         for t in range(max_steps):
@@ -206,7 +197,7 @@ class AttentionDecoder(nn.Module):
 
             targets = next_tokens.clone()
 
-            # Early stopping (только для PyTorch режима)
+            # Early stopping
             if not onnx_mode and (next_tokens == self.eos_id).all():
                 break
 
@@ -219,13 +210,11 @@ class AttentionDecoder(nn.Module):
         self, batch_H: torch.Tensor, text: torch.Tensor, batch_max_length: int = 25
     ) -> torch.Tensor:
         """
-        Training forward pass с teacher forcing.
-
+        Training forward pass with teacher forcing.
         Args:
             batch_H: [B, W, hidden_size] encoder output
-            text: [B, T] target tokens (с SOS токеном в начале)
-            batch_max_length: максимальная длина
-
+            text: [B, T] target tokens (with SOS token at the beginning)
+            batch_max_length: maximum length
         Returns:
             logits: [B, T, num_classes]
         """
@@ -233,7 +222,7 @@ class AttentionDecoder(nn.Module):
         B = batch_H.size(0)
         steps = batch_max_length + 1
 
-        # Инициализация
+        # Initialize hidden states
         h = torch.zeros(B, self.hidden_size, device=device)
         c = torch.zeros(B, self.hidden_size, device=device)
         hidden = (h, c)
@@ -280,13 +269,8 @@ class TRBAModel(nn.Module):
         blank_id: Optional[int] = 3,
         enc_dropout_p: float = 0.1,
         use_ctc_head: bool = True,
-        use_attention_head: bool = True,
     ):
         super().__init__()
-
-        assert (
-            use_ctc_head or use_attention_head
-        ), "Хотя бы одна голова должна быть включена"
 
         self.num_classes = num_classes
         self.hidden_size = hidden_size
@@ -294,7 +278,6 @@ class TRBAModel(nn.Module):
         self.img_h = img_h
         self.img_w = img_w
         self.use_ctc_head = use_ctc_head
-        self.use_attention_head = use_attention_head
         self.cnn_backbone = cnn_backbone.lower()
 
         # ===== CNN Encoder =====
@@ -323,38 +306,37 @@ class TRBAModel(nn.Module):
         self.enc_rnn = nn.Sequential(*encoder_layers)
         self.enc_dropout = nn.Dropout(enc_dropout_p)
 
-        # ===== CTC Head (опционально) =====
+        # ===== Attention Head =====
+        self.attention_decoder = AttentionDecoder(
+            input_size=hidden_size,
+            hidden_size=hidden_size,
+            num_classes=num_classes,
+            sos_id=sos_id,
+            eos_id=eos_id,
+            pad_id=pad_id,
+            blank_id=blank_id,
+            dropout_p=0.1,
+            sampling_prob=0.0,
+        )
+
+        # ===== CTC Head (optional) =====
         if self.use_ctc_head:
             self.ctc_head = nn.Linear(hidden_size, num_classes)
             self.ctc_loss_fn = nn.CTCLoss(
                 blank=blank_id, reduction="mean", zero_infinity=True
             )
 
-        # ===== Attention Head (опционально) =====
-        if self.use_attention_head:
-            self.attention_decoder = AttentionDecoder(
-                input_size=hidden_size,
-                hidden_size=hidden_size,
-                num_classes=num_classes,
-                sos_id=sos_id,
-                eos_id=eos_id,
-                pad_id=pad_id,
-                blank_id=blank_id,
-                dropout_p=0.1,
-                sampling_prob=0.0,
-            )
-
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         # CNN
         f = self.cnn(x)  # [B, C, H', W']
 
-        # Pooling по высоте (ONNX-compatible: mean вместо AdaptiveAvgPool)
+        # Pooling by height
         f = f.mean(dim=2)  # [B, C, W']
 
-        # Permute для RNN
+        # Permute for RNN
         f = f.permute(0, 2, 1)  # [B, W', C]
 
-        # BiRNN encoder (без flatten_parameters для ONNX)
+        # BiRNN encoder 
         f = self.enc_rnn(f)  # [B, W', hidden_size]
         f = self.enc_dropout(f)
 
@@ -369,25 +351,23 @@ class TRBAModel(nn.Module):
         onnx_mode: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Forward pass для Attention декодирования.
+        Forward pass for Attention decoding.
 
         Args:
             x: [B, 3, H, W] input images
-            text: [B, T] target tokens (только для обучения)
-            is_train: режим обучения или инференс
-            batch_max_length: максимальная длина последовательности
-            onnx_mode: ONNX режим (всегда max_length шагов)
+            text: [B, T] target tokens (training only)
+            is_train: training or inference mode
+            batch_max_length: maximum sequence length
+            onnx_mode: ONNX mode (always max_length steps)
 
         Returns:
             logits: [B, T, num_classes]
-            preds: [B, T] (только для инференса) или None
+            preds: [B, T] (inference only) or None
         """
-        assert self.use_attention_head, "Attention head не включена"
-
         enc_output = self.encode(x)  # [B, W, hidden_size]
 
         if is_train:
-            assert text is not None, "text обязателен для обучения"
+            assert text is not None, "text is required for training"
             logits = self.attention_decoder.forward_training(
                 enc_output, text, batch_max_length
             )
@@ -404,71 +384,45 @@ class TRBAModel(nn.Module):
         text: Optional[torch.Tensor] = None,
         is_train: bool = True,
         batch_max_length: int = 25,
-        mode: str = "attention",
         onnx_mode: bool = False,
     ) -> Dict[str, Any]:
         """
         Unified forward pass.
 
-        Использование:
-            Training (PyTorch):
-                result = model(images, text=targets, mode="both", is_train=True)
-                # Получаем оба выхода для dual loss
-
-            Inference (PyTorch):
-                result = model(images, mode="attention", is_train=False)
-                preds = result["attention_preds"]
-
-            ONNX Export:
-                # Используйте wrapper из export_trba_to_onnx.py
-                # Не нужно вызывать этот метод напрямую
-
         Args:
             x: [B, 3, H, W] input images
-            text: [B, T] target tokens (только для обучения)
-            is_train: режим обучения
-            batch_max_length: максимальная длина последовательности
-            mode: "attention" | "both"
-            onnx_mode: True для ONNX экспорта (всегда max_length шагов)
+            text: [B, T] target tokens (training only)
+            is_train: training mode
+            batch_max_length: maximum sequence length
+            onnx_mode: True for ONNX export (always max_length steps)
 
         Returns:
-            dict с ключами в зависимости от mode:
-                "ctc_logits": [B, W, num_classes] (??? mode="both")
+            dict with keys:
                 "attention_logits": [B, T, num_classes]
-                "attention_preds": [B, T] (только inference)
+                "attention_preds": [B, T] (inference only)
+                "ctc_logits": [B, W, num_classes] (if use_ctc_head=True)
         """
         result: Dict[str, Any] = {}
+        
+        enc_output = self.encode(x)
 
-        if mode == "attention":
-            logits, preds = self.forward_attention(
-                x, text, is_train, batch_max_length, onnx_mode
+        # CTC head
+        if self.use_ctc_head:
+            result["ctc_logits"] = self.ctc_head(enc_output)
+
+        # Attention head
+        if is_train:
+            assert text is not None, "text is required for training"
+            logits = self.attention_decoder.forward_training(
+                enc_output, text, batch_max_length
             )
             result["attention_logits"] = logits
-            if preds is not None:
-                result["attention_preds"] = preds
-        elif mode == "both":
-            enc_output = self.encode(x)
-
-            if self.use_ctc_head:
-                result["ctc_logits"] = self.ctc_head(enc_output)
-
-            if self.use_attention_head:
-                if is_train:
-                    assert text is not None, "text is required for training"
-                    logits = self.attention_decoder.forward_training(
-                        enc_output, text, batch_max_length
-                    )
-                    result["attention_logits"] = logits
-                else:
-                    logits, preds = self.attention_decoder.greedy_decode(
-                        enc_output, batch_max_length, onnx_mode=onnx_mode
-                    )
-                    result["attention_logits"] = logits
-                    result["attention_preds"] = preds
         else:
-            raise ValueError(
-                f"mode должен быть 'attention' или 'both', получено: {mode}"
+            logits, preds = self.attention_decoder.greedy_decode(
+                enc_output, batch_max_length, onnx_mode=onnx_mode
             )
+            result["attention_logits"] = logits
+            result["attention_preds"] = preds
 
         return result
 
@@ -479,12 +433,12 @@ class TRBAModel(nn.Module):
         target_lengths: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Вычисление CTC loss.
+        Compute CTC loss.
 
         Args:
             ctc_logits: [B, W, num_classes]
             targets: [B, T] target tokens
-            target_lengths: [B] длины целевых последовательностей
+            target_lengths: [B] target sequence lengths
 
         Returns:
             ctc_loss

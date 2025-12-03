@@ -1,5 +1,3 @@
-"""Visualization utilities for manuscript-ocr."""
-
 from typing import Tuple, Optional, Union
 
 import cv2
@@ -76,69 +74,6 @@ def draw_quads(
     return Image.fromarray(overlay)
 
 
-def draw_boxes(
-    image: np.ndarray,
-    boxes: np.ndarray,
-    color: Tuple[int, int, int] = (0, 255, 0),
-    thickness: int = 2,
-    alpha: float = 0.5,
-) -> np.ndarray:
-    """
-    Draw quad boxes on an image.
-    
-    This is a convenience wrapper for draw_quads that maintains backward compatibility.
-    
-    Parameters
-    ----------
-    image : np.ndarray
-        Input image (RGB).
-    boxes : np.ndarray or torch.Tensor
-        Array of quad boxes with shape (N, 8) or (N, 9).
-        Each row: [x1, y1, x2, y2, x3, y3, x4, y4] with optional score.
-    color : tuple of int, default=(0, 255, 0)
-        RGB color for drawing boxes.
-    thickness : int, default=2
-        Line thickness in pixels.
-    alpha : float, default=0.5
-        Transparency of the overlay (used as dark_alpha in draw_quads).
-        
-    Returns
-    -------
-    np.ndarray
-        Image with drawn boxes.
-        
-    Raises
-    ------
-    ValueError
-        If box format is not recognized (not 8 or 9 values per box).
-        
-    Examples
-    --------
-    >>> quads = np.array([[10, 10, 50, 10, 50, 30, 10, 30]])
-    >>> img = draw_boxes(image, quads)
-    """
-    if boxes is None or len(boxes) == 0:
-        return image
-    
-    # Handle PyTorch tensors
-    if torch is not None and isinstance(boxes, torch.Tensor):
-        boxes = boxes.detach().cpu().numpy()
-    
-    # Validate format
-    first = boxes[0]
-    if len(first) not in (8, 9):
-        raise ValueError(
-            f"Unsupported box format with length {len(first)}. "
-            "Expected quad boxes with 8 or 9 values per box."
-        )
-    
-    # Use draw_quads for rendering
-    quad_img = draw_quads(
-        image, boxes, color=color, thickness=thickness, dark_alpha=alpha
-    )
-    return np.array(quad_img)
-
-
 def visualize_page(
     image: Union[np.ndarray, Image.Image],
     page: "Page",  # type: ignore  # noqa: F821
@@ -195,26 +130,23 @@ def visualize_page(
     --------
     Basic visualization without reading order:
     
-    >>> from manuscript import EAST, visualize_page
+    >>> from manuscript import EAST
+    >>> from manuscript.utils import visualize_page, read_image
     >>> detector = EAST()
     >>> result = detector.predict("document.jpg")
-    >>> vis = visualize_page(result["vis_image"], result["page"])
+    >>> img = read_image("document.jpg")
+    >>> vis = visualize_page(img, result["page"])
     >>> vis.save("output.jpg")
     
     Visualization with reading order display:
     
     >>> vis = visualize_page(
-    ...     result["vis_image"],
+    ...     img,
     ...     result["page"],
     ...     show_order=True,
     ...     color=(255, 0, 0),
     ...     thickness=3
     ... )
-    
-    Notes
-    -----
-    This function was moved from manuscript.detectors._east.utils to be model-agnostic,
-    as it works with the generic Page structure from manuscript.data.
     """
     # Convert to numpy array if PIL Image
     if isinstance(image, Image.Image):
@@ -286,15 +218,31 @@ def visualize_page(
     if len(lines_data) == 0:
         return Image.fromarray(img) if isinstance(image, np.ndarray) else image
     
-    # Apply darkening if requested
-    if dark_alpha > 0:
-        overlay = (img * (1 - dark_alpha)).astype(np.uint8)
-    else:
-        overlay = img
+    # Create mask for text areas to preserve them during darkening/blurring
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    for line_quads, line_words, line_idx in lines_data:
+        for quad in line_quads:
+            coords = quad[:8].reshape(4, 2).astype(np.int32)
+            cv2.fillPoly(mask, [coords], 255)
     
-    # Apply blur if requested
-    if blur_ksize > 0:
-        overlay = cv2.GaussianBlur(overlay, (blur_ksize, blur_ksize), 0)
+    # Apply darkening and/or blur only to background (outside boxes)
+    overlay = img.copy()
+    
+    if dark_alpha > 0 or blur_ksize > 0:
+        # Create background version (darkened/blurred)
+        background = img.copy()
+        
+        # Apply darkening to background
+        if dark_alpha > 0:
+            background = (background * (1 - dark_alpha)).astype(np.uint8)
+        
+        # Apply blur to background
+        if blur_ksize > 0:
+            background = cv2.GaussianBlur(background, (blur_ksize, blur_ksize), 0)
+        
+        # Composite: use original image inside boxes, darkened/blurred outside
+        mask_3ch = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+        overlay = np.where(mask_3ch > 0, img, background)
     
     # Draw quads with line-specific colors if show_order is True
     for line_quads, line_words, line_idx in lines_data:

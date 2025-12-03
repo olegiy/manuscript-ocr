@@ -4,12 +4,30 @@ import csv
 from collections import Counter, defaultdict
 from manuscript.recognizers import TRBA
 from manuscript.recognizers._trba.training.metrics import (
-    character_error_rate,
-    word_error_rate,
+    compute_cer,
+    compute_wer,
     compute_accuracy,
 )
-import Levenshtein
 from tqdm import tqdm
+
+# Levenshtein only for detailed error analysis
+try:
+    import Levenshtein
+    HAS_LEVENSHTEIN = True
+except ImportError:
+    HAS_LEVENSHTEIN = False
+    print("Warning: python-Levenshtein not installed. Detailed error analysis will be limited.")
+
+
+# Wrapper functions for single-item compatibility
+def character_error_rate(reference: str, hypothesis: str) -> float:
+    """Single-item CER for compatibility."""
+    return compute_cer([reference], [hypothesis])
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Single-item WER for compatibility."""
+    return compute_wer([reference], [hypothesis])
 
 
 # === Пути ===
