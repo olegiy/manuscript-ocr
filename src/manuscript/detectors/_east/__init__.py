@@ -11,7 +11,7 @@ from torch.utils.data import ConcatDataset
 from manuscript.api.base import BaseModel
 
 from ...data import Block, Line, Page, Word
-from ...utils import read_image, sort_into_lines
+from ...utils import read_image, sort_into_lines, segment_columns
 from .dataset import EASTDataset
 from .east import EASTModel
 from .lanms import locality_aware_nms
@@ -20,8 +20,6 @@ from .utils import (
     decode_quads_from_maps,
     expand_boxes,
 )
-
-
 
 
 class EAST(BaseModel):
@@ -145,7 +143,9 @@ class EAST(BaseModel):
             providers=providers,
         )
 
-    def _scale_boxes_to_original(self, boxes: np.ndarray, orig_size: Tuple[int, int]) -> np.ndarray:
+    def _scale_boxes_to_original(
+        self, boxes: np.ndarray, orig_size: Tuple[int, int]
+    ) -> np.ndarray:
         if len(boxes) == 0:
             return boxes
 
@@ -286,9 +286,9 @@ class EAST(BaseModel):
         (1) image loading, (2) resizing and normalization, (3) model inference,
         (4) quad decoding, (5) NMS, (6) box expansion, (7) scaling coordinates
         back to original size, (8) optional reading order sorting into lines.
-        
+
         For visualization, use the external ``visualize_page`` utility:
-        
+
         >>> from manuscript.utils import visualize_page
         >>> result = model.predict(img_path)
         >>> vis_img = visualize_page(img, result["page"])
@@ -305,9 +305,9 @@ class EAST(BaseModel):
         >>> # Access first line's first word
         >>> first_word = page.blocks[0].lines[0].words[0]
         >>> print(f"Confidence: {first_word.detection_confidence}")
-        
+
         Visualize results separately:
-        
+
         >>> from manuscript.utils import visualize_page, read_image
         >>> result = model.predict(img_path)
         >>> img = read_image(img_path)
@@ -384,26 +384,36 @@ class EAST(BaseModel):
                 box = (int(x_min), int(y_min), int(x_max), int(y_max))
                 boxes.append(box)
                 word_to_box[box] = w
-            
-            # Sort into lines (list of list of boxes)
-            lines_of_boxes = sort_into_lines(boxes)
-            
-            # Convert to Line objects with ordered Words
-            lines: List[Line] = []
-            for line_idx, line_boxes in enumerate(lines_of_boxes):
-                line_words = []
-                for word_idx, box in enumerate(line_boxes):
-                    word = word_to_box[box]
-                    # Set word order within the line
-                    word.order = word_idx
-                    line_words.append(word)
-                
-                # Create Line with order
-                line = Line(words=line_words, order=line_idx)
-                lines.append(line)
-            
-            # Create Page with single Block containing all Lines
-            page = Page(blocks=[Block(lines=lines, order=0)])
+
+            # Segment into columns
+            columns = segment_columns(boxes, max_splits=10)
+
+            # Create blocks from columns
+            blocks: List[Block] = []
+            for block_idx, column_boxes in enumerate(columns):
+                # Sort this column into lines
+                lines_in_column = sort_into_lines(column_boxes, use_columns=False)
+
+                # Convert to Line objects with ordered Words
+                lines: List[Line] = []
+                for line_idx, line_boxes in enumerate(lines_in_column):
+                    line_words = []
+                    for word_idx, box in enumerate(line_boxes):
+                        word = word_to_box[box]
+                        # Set word order within the line
+                        word.order = word_idx
+                        line_words.append(word)
+
+                    # Create Line with order
+                    line = Line(words=line_words, order=line_idx)
+                    lines.append(line)
+
+                # Create Block for this column
+                block = Block(lines=lines, order=block_idx)
+                blocks.append(block)
+
+            # Create Page with multiple Blocks (one per column)
+            page = Page(blocks=blocks)
         else:
             # No sorting - put all words in single line in single block
             for idx, w in enumerate(words):
@@ -473,10 +483,10 @@ class EAST(BaseModel):
             Default is ``"resnet_quad"``.
         backbone_name : {"resnet50", "resnet101"}, optional
             Backbone architecture to use. Options:
-            
+
             - ``"resnet50"`` — ResNet-50 (faster, less parameters)
             - ``"resnet101"`` — ResNet-101 (slower, more capacity)
-            
+
             Default is ``"resnet50"``.
         pretrained_backbone : bool, optional
             Use ImageNet-pretrained backbone weights. Default ``True``.
@@ -495,10 +505,10 @@ class EAST(BaseModel):
             Number of gradient accumulation steps. Effective batch size will be
             ``batch_size * accumulation_steps``. Use this to train with larger
             effective batch sizes when GPU memory is limited. For example:
-            
+
             - ``batch_size=2, accumulation_steps=4`` → effective batch size = 8
             - ``batch_size=1, accumulation_steps=8`` → effective batch size = 8
-            
+
             Default is ``1`` (no accumulation).
         lr : float, optional
             Learning rate. Default ``1e-3``.
@@ -818,7 +828,7 @@ class EAST(BaseModel):
         dynamic axes configuration.
 
         **Automatic Backbone Detection:**
-        
+
         The method automatically detects the backbone architecture from the checkpoint
         by analyzing the number of parameters in layer4. This prevents mismatches between
         checkpoint and architecture that could lead to incorrect exports.
@@ -875,38 +885,42 @@ class EAST(BaseModel):
 
         print(f"Loading checkpoint from {weights_path}...")
         checkpoint = torch.load(str(weights_path), map_location="cpu")
-        
+
         # Auto-detect backbone if not specified
         if backbone_name is None:
             print("Auto-detecting backbone architecture...")
             # Detect by checking layer3 parameters count
             # ResNet50: layer3 has 6 bottleneck blocks (layer3.0 - layer3.5)
             # ResNet101: layer3 has 23 bottleneck blocks (layer3.0 - layer3.22)
-            
+
             # Count backbone.extractor.* parameters starting with "layer3"
-            layer3_keys = [k for k in checkpoint.keys() if "backbone.extractor.layer3" in k]
-            
+            layer3_keys = [
+                k for k in checkpoint.keys() if "backbone.extractor.layer3" in k
+            ]
+
             # Check if layer3.10 exists (only in resnet101)
             has_layer3_10 = any("layer3.10" in k for k in layer3_keys)
-            
+
             if has_layer3_10:
                 detected_backbone = "resnet101"
             else:
                 detected_backbone = "resnet50"
-            
+
             print(f"   Detected {len(layer3_keys)} layer3 parameters")
             print(f"   Auto-detected backbone: {detected_backbone}")
             backbone_name = detected_backbone
         else:
             print(f"Using specified backbone: {backbone_name}")
-            
+
             # Verify backbone matches checkpoint
             print("Verifying backbone matches checkpoint...")
-            layer3_keys = [k for k in checkpoint.keys() if "backbone.extractor.layer3" in k]
+            layer3_keys = [
+                k for k in checkpoint.keys() if "backbone.extractor.layer3" in k
+            ]
             has_layer3_10 = any("layer3.10" in k for k in layer3_keys)
-            
+
             expected_backbone = "resnet101" if has_layer3_10 else "resnet50"
-            
+
             if expected_backbone != backbone_name:
                 raise ValueError(
                     f"Backbone mismatch! Checkpoint is {expected_backbone}, "
@@ -978,11 +992,10 @@ class EAST(BaseModel):
         # Test ONNX inference and compare with PyTorch
         try:
             import onnxruntime as ort
-            
+
             print(f"\nTesting ONNX inference...")
             session = ort.InferenceSession(
-                str(output_path),
-                providers=["CPUExecutionProvider"]
+                str(output_path), providers=["CPUExecutionProvider"]
             )
 
             ort_inputs = {"input": dummy_input.numpy()}
@@ -1001,7 +1014,7 @@ class EAST(BaseModel):
 
             score_max_diff = abs(torch_score - onnx_score).max()
             geo_max_diff = abs(torch_geo - onnx_geo).max()
-            
+
             print(f"  Max difference in score_map: {score_max_diff:.6f}")
             print(f"  Max difference in geo_map: {geo_max_diff:.6f}")
 
