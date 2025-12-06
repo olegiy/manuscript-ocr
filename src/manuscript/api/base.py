@@ -66,6 +66,34 @@ class BaseModel(ABC):
             return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
         else:
             return ["CPUExecutionProvider"]
+    
+    def _log_device_info(self, session):
+        """
+        Log information about requested and actual execution providers.
+        
+        Parameters
+        ----------
+        session : onnxruntime.InferenceSession
+            The initialized ONNX Runtime session
+        """
+        requested_providers = self.runtime_providers()
+        actual_providers = session.get_providers()
+        
+        print(f"[{self.__class__.__name__}] Device configuration:")
+        print(f"  Requested device: {self.device}")
+        print(f"  Requested providers: {requested_providers}")
+        print(f"  Active providers: {actual_providers}")
+        
+        # Check if primary provider is available
+        if self.device == "cuda" and "CUDAExecutionProvider" not in actual_providers:
+            print(f"  Warning: CUDA requested but not available. Falling back to CPU.")
+            print(f"      Install onnxruntime-gpu for CUDA support: pip install onnxruntime-gpu")
+        elif self.device == "coreml" and "CoreMLExecutionProvider" not in actual_providers:
+            print(f"  Warning: CoreML requested but not available. Falling back to CPU.")
+            print(f"      Install onnxruntime-silicon for CoreML support: pip install onnxruntime-silicon")
+        else:
+            primary_provider = actual_providers[0] if actual_providers else "Unknown"
+            print(f"  Running on: {primary_provider}")
 
     # -------------------------------------------------------------------------
     # WEIGHT RESOLUTION (main artifact)

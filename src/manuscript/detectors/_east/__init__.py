@@ -159,6 +159,8 @@ class EAST(BaseModel):
             self.weights,
             providers=providers,
         )
+        
+        self._log_device_info(self.onnx_session)
 
     def _scale_boxes_to_original(
         self, boxes: np.ndarray, orig_size: Tuple[int, int]
