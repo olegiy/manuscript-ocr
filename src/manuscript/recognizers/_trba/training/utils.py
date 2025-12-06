@@ -65,7 +65,7 @@ def load_checkpoint(
         filtered_state = {}
         skipped_keys = []
         shape_mismatches = []
-        
+
         for k, v in model_state.items():
             if k in current_state:
                 if current_state[k].shape == v.shape:
@@ -76,11 +76,11 @@ def load_checkpoint(
                     )
             else:
                 skipped_keys.append(k)
-        
+
         missing_keys = set(current_state.keys()) - set(filtered_state.keys())
-        
+
         result = model.load_state_dict(filtered_state, strict=False)
-        
+
         if shape_mismatches or skipped_keys or missing_keys:
             if shape_mismatches:
                 print(f"⚠️  Shape mismatches (skipped {len(shape_mismatches)} layers):")
@@ -88,18 +88,22 @@ def load_checkpoint(
                     print(f"   - {msg}")
                 if len(shape_mismatches) > 5:
                     print(f"   ... and {len(shape_mismatches) - 5} more")
-            
+
             if missing_keys:
-                print(f"ℹ️  Missing keys in checkpoint (initialized randomly): {len(missing_keys)}")
+                print(
+                    f"ℹ️  Missing keys in checkpoint (initialized randomly): {len(missing_keys)}"
+                )
                 for key in list(missing_keys)[:3]:
                     print(f"   - {key}")
                 if len(missing_keys) > 3:
                     print(f"   ... and {len(missing_keys) - 3} more")
-        
+
         loaded_params = sum(p.numel() for p in filtered_state.values())
         total_params = sum(p.numel() for p in current_state.values())
-        print(f"✓ Loaded {len(filtered_state)}/{len(current_state)} layers "
-              f"({loaded_params/1e6:.1f}M/{total_params/1e6:.1f}M parameters)")
+        print(
+            f" Loaded {len(filtered_state)}/{len(current_state)} layers "
+            f"({loaded_params/1e6:.1f}M/{total_params/1e6:.1f}M parameters)"
+        )
 
     if optimizer is not None and metadata.get("optimizer_state") is not None:
         optimizer.load_state_dict(metadata["optimizer_state"])
@@ -122,6 +126,7 @@ def set_seed(seed: int = 42):
 # -------------------------
 # Pretrained weights helpers
 # -------------------------
+
 
 def _is_url(path_or_url: str) -> bool:
     return isinstance(path_or_url, str) and (
@@ -195,14 +200,14 @@ def load_pretrained_weights(
     Load pretrained weights into `model` from local path or URL.
     Robust to different checkpoint layouts and tensor prefixes.
     Only matching keys with identical shapes are loaded.
-    
+
     Args:
         model: Target model
         src: Path or URL to weights
         map_location: Device for loading
         logger: Logger instance
         legacy_migration: If True, automatically migrates legacy TRBA weights (attn.* -> attention_decoder.*)
-        
+
     Returns stats dict.
     """
     if map_location == "auto":
@@ -225,14 +230,16 @@ def load_pretrained_weights(
         return {"ok": False, "error": str(e), "src": src}
 
     raw_state = _extract_model_state(raw_obj)
-    
+
     # Legacy migration: attn.* -> attention_decoder.*
     if legacy_migration and any(k.startswith("attn.") for k in raw_state.keys()):
         if logger:
-            logger.info("Detected legacy TRBA weights (attn.*), applying migration to attention_decoder.*")
+            logger.info(
+                "Detected legacy TRBA weights (attn.*), applying migration to attention_decoder.*"
+            )
         else:
             print("[pretrain] Migrating legacy TRBA weights...")
-        
+
         migrated_state = {}
         for k, v in raw_state.items():
             if k.startswith("attn."):
@@ -241,7 +248,7 @@ def load_pretrained_weights(
             else:
                 migrated_state[k] = v
         raw_state = migrated_state
-    
+
     filt_state, stats = build_compatible_state_dict(model, raw_state)
 
     missing_after = set(model.state_dict().keys()) - set(filt_state.keys())

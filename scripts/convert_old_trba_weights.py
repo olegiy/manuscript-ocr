@@ -110,9 +110,9 @@ def convert_weights(old_weights_path, config_path, charset_path, output_path):
                 print(f"  ... and {len(unexpected_keys) - 20} more")
         
         if not missing_keys and not unexpected_keys:
-            print("✓ Perfect match! All weights loaded successfully.")
+            print(" Perfect match! All weights loaded successfully.")
         elif not missing_keys:
-            print("✓ All new model weights loaded (some old keys ignored).")
+            print(" All new model weights loaded (some old keys ignored).")
         else:
             print("⚠ Some weights missing - may need manual conversion.")
             print("\nChecking critical components:")
@@ -122,14 +122,14 @@ def convert_weights(old_weights_path, config_path, charset_path, output_path):
             enc_loaded = all(k.startswith('enc_rnn.') for k in missing_keys if k.startswith('enc_rnn.'))
             attn_loaded = all(k.startswith('attn.') for k in missing_keys if k.startswith('attn.'))
             
-            print(f"  CNN encoder: {'✓' if not cnn_loaded else '✗'}")
-            print(f"  BiLSTM encoder: {'✓' if not enc_loaded else '✗'}")
-            print(f"  Attention decoder: {'✓' if not attn_loaded else '✗'}")
+            print(f"  CNN encoder: {'' if not cnn_loaded else '✗'}")
+            print(f"  BiLSTM encoder: {'' if not enc_loaded else '✗'}")
+            print(f"  Attention decoder: {'' if not attn_loaded else '✗'}")
         
         # Сохраняем конвертированные веса
         print(f"\nSaving converted weights to: {output_path}")
         torch.save(model.state_dict(), output_path)
-        print("✓ Weights saved successfully!")
+        print(" Weights saved successfully!")
         
         # Сохраняем также полный checkpoint для совместимости
         checkpoint_path = output_path.replace('.pth', '_ckpt.pth')
@@ -139,7 +139,7 @@ def convert_weights(old_weights_path, config_path, charset_path, output_path):
             'num_classes': num_classes,
         }
         torch.save(checkpoint, checkpoint_path)
-        print(f"✓ Full checkpoint saved to: {checkpoint_path}")
+        print(f" Full checkpoint saved to: {checkpoint_path}")
         
         return True
         
@@ -181,7 +181,7 @@ def main():
     
     if success:
         print("\n" + "=" * 80)
-        print("✓ Conversion completed successfully!")
+        print(" Conversion completed successfully!")
         print("=" * 80)
         print("\nNext steps:")
         print(f"1. Test with: python scripts/trba_infer_speed_test.py --model-path \"{output_path}\" --config-path \"{config_path}\" --folder <test_folder> --gt-csv <test_csv>")

@@ -44,8 +44,13 @@ class EAST(BaseModel):
         Path to ONNX model weights. If None, the model will be
         automatically downloaded to ``~/.manuscript/east/east_50_g1.onnx``.
     device : str, optional
-        Compute device: ``"cuda"`` or ``"cpu"``. If None, selected automatically.
-        Note: CUDA requires onnxruntime-gpu package.
+        Compute device: ``"cuda"``, ``"coreml"``, or ``"cpu"``. If None,
+        automatically selects CPU. For GPU/CoreML acceleration:
+
+        - CUDA (NVIDIA): ``pip install onnxruntime-gpu``
+        - CoreML (Apple Silicon M1/M2/M3): ``pip install onnxruntime-silicon``
+
+        Default is ``None`` (CPU).
     target_size : int, optional
         Input image size for inference. Images are resized to
         ``(target_size, target_size)``. Default is 1280.

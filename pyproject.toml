@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
-    # ONNX Runtime for inference (no PyTorch needed)
+    # ONNX Runtime for inference (CPU by default, GPU/CoreML installed separately)
     "onnxruntime>=1.16",
 
     # Image processing
@@ -46,6 +46,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
+# GPU support for ONNX Runtime (NVIDIA CUDA)
+# User installs manually: pip install onnxruntime-gpu
+gpu = []
+
+# Apple Silicon support (CoreML acceleration)
+# User installs manually: pip install onnxruntime-silicon
+silicon = []
 
 # Full development dependencies (includes PyTorch for training)
 dev = [

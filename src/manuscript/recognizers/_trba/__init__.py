@@ -47,9 +47,14 @@ class TRBA(BaseModel):
     charset : str or Path, optional
         Path or identifier for character set file. If ``None``, attempts to
         find charset near weights or falls back to package default.
-    device : {"cuda", "cpu"}, optional
-        Compute device. If ``None``, automatically selects CUDA if
-        available (requires onnxruntime-gpu), otherwise CPU.
+    device : {"cuda", "coreml", "cpu"}, optional
+        Compute device. If ``None``, automatically selects CPU.
+        For GPU/CoreML acceleration:
+
+        - CUDA (NVIDIA): ``pip install onnxruntime-gpu``
+        - CoreML (Apple Silicon M1/M2/M3): ``pip install onnxruntime-silicon``
+
+        Default is ``None`` (CPU).
     **kwargs
         Additional configuration options (reserved for future use).
 
