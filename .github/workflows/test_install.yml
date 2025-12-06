@@ -32,8 +32,16 @@ jobs:
       - name: Check for dependency conflicts
         run: pip check
 
-      - name: Run inference-only tests (PyTorch-dependent tests will be skipped)
-        run: pytest tests/ -v --cov=src --cov-report=xml
+      - name: Run inference-only tests (without PyTorch)
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml \
+            --ignore=tests/detectors/east/test_dataset.py \
+            --ignore=tests/detectors/east/test_east.py \
+            --ignore=tests/detectors/east/test_loss.py \
+            --ignore=tests/detectors/east/test_sam.py \
+            --ignore=tests/detectors/east/test_train_utils.py \
+            --ignore=tests/detectors/east/test_east_train_export.py \
+            --ignore=tests/detectors/east/test_utils.py
 
   test-dev-installation:
     runs-on: ubuntu-latest

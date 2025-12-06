@@ -3,13 +3,14 @@ import pytest
 try:
     import torch
     import torch.nn as nn
+    from manuscript.detectors._east.sam import SAMSolver
+
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None
     nn = None
-
-from manuscript.detectors._east.sam import SAMSolver
+    SAMSolver = None
 
 
 # --- Tests for SAMSolver initialization ---
@@ -20,11 +21,12 @@ def test_sam_solver_initialization_default():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     assert optimizer.use_adaptive == False
     assert len(optimizer.param_groups) > 0
     assert optimizer.param_groups[0]["rho"] == 0.05
     assert optimizer.param_groups[0]["lr"] == 0.01
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_custom_rho():
@@ -33,8 +35,9 @@ def test_sam_solver_initialization_custom_rho():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, rho=0.1, lr=0.01
     )
-    
+
     assert optimizer.param_groups[0]["rho"] == 0.1
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_adaptive():
@@ -46,18 +49,20 @@ def test_sam_solver_initialization_adaptive():
         use_adaptive=True,
         lr=0.01,
     )
-    
+
     assert optimizer.use_adaptive == True
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_negative_rho():
     """Test SAMSolver initialization with negative rho"""
     model = nn.Linear(10, 5)
-    
+
     with pytest.raises(ValueError, match="rho must be non-negative"):
         SAMSolver(
             model.parameters(), base_optimizer_cls=torch.optim.SGD, rho=-0.1, lr=0.01
         )
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_adam():
@@ -66,31 +71,31 @@ def test_sam_solver_initialization_adam():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001
     )
-    
+
     assert isinstance(optimizer._optimizer, torch.optim.Adam)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_initialization_different_optimizers():
     """Test SAMSolver initialization with different optimizers"""
     model = nn.Linear(10, 5)
-    
+
     # SGD
-    opt_sgd = SAMSolver(
-        model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
-    )
+    opt_sgd = SAMSolver(model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01)
     assert isinstance(opt_sgd._optimizer, torch.optim.SGD)
-    
+
     # Adam
     opt_adam = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001
     )
     assert isinstance(opt_adam._optimizer, torch.optim.Adam)
-    
+
     # RMSprop
     opt_rmsprop = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.RMSprop, lr=0.01
     )
     assert isinstance(opt_rmsprop._optimizer, torch.optim.RMSprop)
+
 
 # --- Tests for step method ---
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
@@ -100,26 +105,26 @@ def test_sam_solver_step_basic():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     initial_params = [p.clone() for p in model.parameters()]
     loss = optimizer.step(closure)
-    
+
     # Check that parameters changed
     params_changed = any(
-        not torch.equal(p1, p2)
-        for p1, p2 in zip(initial_params, model.parameters())
+        not torch.equal(p1, p2) for p1, p2 in zip(initial_params, model.parameters())
     )
     assert params_changed
     assert isinstance(loss, torch.Tensor)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_reduces_loss():
@@ -128,26 +133,27 @@ def test_sam_solver_step_reduces_loss():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.1
     )
-    
+
     x = torch.randn(10, 10)
     y = torch.randn(10, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     initial_loss = closure().item()
-    
+
     # Multiple optimization steps
     for _ in range(10):
         optimizer.step(closure)
-    
+
     final_loss = closure().item()
-    
+
     # Loss should decrease after several iterations
     assert final_loss < initial_loss
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_with_adaptive():
@@ -159,18 +165,19 @@ def test_sam_solver_step_with_adaptive():
         use_adaptive=True,
         lr=0.01,
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     loss = optimizer.step(closure)
     assert isinstance(loss, torch.Tensor)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_step_multiple_iterations():
@@ -179,21 +186,21 @@ def test_sam_solver_step_multiple_iterations():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(5, 10)
     y = torch.randn(5, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     losses = []
     for _ in range(5):
         loss = optimizer.step(closure)
         losses.append(loss.item())
-    
+
     # All losses should be valid
     assert all(l >= 0 for l in losses)
 
@@ -206,24 +213,26 @@ def test_sam_solver_zero_grad():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     # Create gradients
     output = model(x)
     loss = nn.functional.mse_loss(output, y)
     loss.backward()
-    
+
     # Check that gradients exist
     assert any(p.grad is not None for p in model.parameters())
-    
+
     # Zero gradients
     optimizer.zero_grad()
-    
+
     # Check that gradients are zeroed
-    assert all(p.grad is None or torch.allclose(p.grad, torch.zeros_like(p.grad)) 
-               for p in model.parameters())
+    assert all(
+        p.grad is None or torch.allclose(p.grad, torch.zeros_like(p.grad))
+        for p in model.parameters()
+    )
 
 
 # --- Tests for state_dict and load_state_dict ---
@@ -234,11 +243,12 @@ def test_sam_solver_state_dict():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     state = optimizer.state_dict()
-    
+
     assert isinstance(state, dict)
     assert "state" in state or "param_groups" in state
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_load_state_dict():
@@ -247,29 +257,29 @@ def test_sam_solver_load_state_dict():
     optimizer1 = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     # Perform an optimization step
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     def closure():
         optimizer1.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     optimizer1.step(closure)
-    
+
     # Save state
     state = optimizer1.state_dict()
-    
+
     # Create new optimizer and load state
     model2 = nn.Linear(10, 5)
     optimizer2 = SAMSolver(
         model2.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
     optimizer2.load_state_dict(state)
-    
+
     # States should be identical
     assert optimizer2.state_dict().keys() == optimizer1.state_dict().keys()
 
@@ -281,34 +291,34 @@ def test_sam_solver_state_persistence():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001
     )
-    
+
     x = torch.randn(5, 10)
     y = torch.randn(5, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     # Make several steps
     for _ in range(3):
         optimizer.step(closure)
-    
+
     # Save state
     saved_state = optimizer.state_dict()
-    
+
     # Make more steps
     for _ in range(3):
         optimizer.step(closure)
-    
+
     # Restore state
     optimizer.load_state_dict(saved_state)
-    
+
     # State should be restored (check structure)
     current_state = optimizer.state_dict()
     assert current_state.keys() == saved_state.keys()
-    assert len(current_state['param_groups']) == len(saved_state['param_groups'])
+    assert len(current_state["param_groups"]) == len(saved_state["param_groups"])
 
 
 # --- Tests for _compute_grad_magnitude ---
@@ -319,18 +329,18 @@ def test_sam_solver_compute_grad_magnitude_with_gradients():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     # Create gradients
     output = model(x)
     loss = nn.functional.mse_loss(output, y)
     loss.backward()
-    
+
     # Compute grad magnitude
     grad_norm = optimizer._compute_grad_magnitude()
-    
+
     assert isinstance(grad_norm, torch.Tensor)
     assert grad_norm > 0
 
@@ -342,10 +352,10 @@ def test_sam_solver_compute_grad_magnitude_no_gradients():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     # No gradients
     grad_norm = optimizer._compute_grad_magnitude()
-    
+
     assert isinstance(grad_norm, torch.Tensor)
     assert grad_norm == 0.0
 
@@ -360,16 +370,16 @@ def test_sam_solver_compute_grad_magnitude_adaptive():
         use_adaptive=True,
         lr=0.01,
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     output = model(x)
     loss = nn.functional.mse_loss(output, y)
     loss.backward()
-    
+
     grad_norm = optimizer._compute_grad_magnitude()
-    
+
     assert isinstance(grad_norm, torch.Tensor)
     assert grad_norm > 0
 
@@ -384,59 +394,61 @@ def test_sam_solver_training_loop():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     # Generate data
     X = torch.randn(100, 5)
     y = torch.randn(100, 1)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(X)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     initial_loss = closure().item()
-    
+
     # Train
     for _ in range(20):
         loss = optimizer.step(closure)
-    
+
     final_loss = loss.item()
-    
+
     # Loss should decrease
     assert final_loss < initial_loss
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_different_model_architectures():
     """Test SAMSolver with different model architectures"""
     x = torch.randn(5, 10)
     y = torch.randn(5, 3)
-    
+
     # Simple linear model
     model1 = nn.Linear(10, 3)
     opt1 = SAMSolver(model1.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01)
-    
+
     def closure1():
         opt1.zero_grad()
         loss = nn.functional.mse_loss(model1(x), y)
         return loss
-    
+
     loss1 = opt1.step(closure1)
     assert torch.isfinite(loss1)
-    
+
     # Multi-layer model
     model2 = nn.Sequential(
         nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10), nn.ReLU(), nn.Linear(10, 3)
     )
     opt2 = SAMSolver(model2.parameters(), base_optimizer_cls=torch.optim.Adam, lr=0.001)
-    
+
     def closure2():
         opt2.zero_grad()
         loss = nn.functional.mse_loss(model2(x), y)
         return loss
-    
+
     loss2 = opt2.step(closure2)
     assert torch.isfinite(loss2)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_batch_training():
@@ -445,20 +457,21 @@ def test_sam_solver_batch_training():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     # Different batch sizes
     for batch_size in [1, 5, 10, 20]:
         x = torch.randn(batch_size, 10)
         y = torch.randn(batch_size, 5)
-        
+
         def closure():
             optimizer.zero_grad()
             output = model(x)
             loss = nn.functional.mse_loss(output, y)
             return loss
-        
+
         loss = optimizer.step(closure)
         assert torch.isfinite(loss)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_rho_values():
@@ -466,44 +479,46 @@ def test_sam_solver_rho_values():
     model = nn.Linear(10, 5)
     x = torch.randn(5, 10)
     y = torch.randn(5, 5)
-    
+
     for rho in [0.01, 0.05, 0.1, 0.5]:
         optimizer = SAMSolver(
             model.parameters(), base_optimizer_cls=torch.optim.SGD, rho=rho, lr=0.01
         )
-        
+
         def closure():
             optimizer.zero_grad()
             output = model(x)
             loss = nn.functional.mse_loss(output, y)
             return loss
-        
+
         loss = optimizer.step(closure)
         assert torch.isfinite(loss)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_cuda_device():
     """Test SAMSolver on CUDA device"""
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    
+
     model = nn.Linear(10, 5).cuda()
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(3, 10).cuda()
     y = torch.randn(3, 5).cuda()
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     loss = optimizer.step(closure)
-    
+
     assert loss.device.type == "cuda"
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_cpu_device():
@@ -512,19 +527,20 @@ def test_sam_solver_cpu_device():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     x = torch.randn(3, 10)
     y = torch.randn(3, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     loss = optimizer.step(closure)
-    
+
     assert loss.device.type == "cpu"
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_parameter_updates():
@@ -533,61 +549,63 @@ def test_sam_solver_parameter_updates():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.1
     )
-    
+
     x = torch.randn(10, 5)
     y = torch.randn(10, 3)
-    
+
     # Save initial parameters
     initial_weight = model.weight.clone()
     initial_bias = model.bias.clone()
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     # Make a step
     optimizer.step(closure)
-    
+
     # Parameters should change
     assert not torch.equal(model.weight, initial_weight)
     assert not torch.equal(model.bias, initial_bias)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_convergence():
     """Test SAMSolver convergence on simple task"""
     torch.manual_seed(123)
-    
+
     # Create simple linear dependency
     true_w = torch.randn(5, 1)
     true_b = torch.randn(1)
-    
+
     X = torch.randn(100, 5)
     y = X @ true_w + true_b + torch.randn(100, 1) * 0.1
-    
+
     model = nn.Linear(5, 1)
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01
     )
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(X)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     losses = []
     for _ in range(50):
         loss = optimizer.step(closure)
         losses.append(loss.item())
-    
+
     # Check that loss generally decreases
     # Take average of first 10 and last 10
     early_avg = sum(losses[:10]) / 10
     late_avg = sum(losses[-10:]) / 10
-    
+
     assert late_avg < early_avg
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_with_momentum():
@@ -599,18 +617,19 @@ def test_sam_solver_with_momentum():
         lr=0.01,
         momentum=0.9,
     )
-    
+
     x = torch.randn(5, 10)
     y = torch.randn(5, 5)
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     loss = optimizer.step(closure)
     assert torch.isfinite(loss)
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 def test_sam_solver_small_model():
@@ -619,23 +638,22 @@ def test_sam_solver_small_model():
     optimizer = SAMSolver(
         model.parameters(), base_optimizer_cls=torch.optim.SGD, lr=0.01  # Reduced lr
     )
-    
+
     x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     y = torch.tensor([[3.0], [7.0]])
-    
+
     def closure():
         optimizer.zero_grad()
         output = model(x)
         loss = nn.functional.mse_loss(output, y)
         return loss
-    
+
     initial_loss = closure().item()
-    
+
     for _ in range(10):
         loss = optimizer.step(closure)
-    
-    
+
     final_loss = loss.item()
-    
+
     # Check that loss is finite and didn't explode
     assert torch.isfinite(torch.tensor(final_loss))

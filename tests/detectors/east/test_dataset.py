@@ -6,16 +6,19 @@ from pathlib import Path
 
 try:
     import torch
+    from manuscript.detectors._east.dataset import (
+        order_vertices_clockwise,
+        shrink_poly,
+        EASTDataset,
+    )
+
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None
-
-from manuscript.detectors._east.dataset import (
-    order_vertices_clockwise,
-    shrink_poly,
-    EASTDataset,
-)
+    order_vertices_clockwise = None
+    shrink_poly = None
+    EASTDataset = None
 
 
 # ============================================================================
@@ -128,9 +131,7 @@ class TestEASTDataset:
     def simple_dataset(self, tmp_path):
         """Creates a simple dataset with one image"""
         annotations = {
-            "images": [
-                {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}
-            ],
+            "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
                 {
                     "id": 1,
@@ -242,9 +243,7 @@ class TestEASTDataset:
             img = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.imwrite(str(img_dir / fname), img)
 
-        with pytest.warns(
-            UserWarning, match="found.*images without valid quads"
-        ):
+        with pytest.warns(UserWarning, match="found.*images without valid quads"):
             dataset = EASTDataset(str(img_dir), str(ann_file))
 
         # Only 1 valid image should remain
@@ -379,9 +378,7 @@ class TestEASTDataset:
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
         # Create a square
-        quad = np.array(
-            [[50, 50], [150, 50], [150, 150], [50, 150]], dtype=np.float32
-        )
+        quad = np.array([[50, 50], [150, 50], [150, 150], [50, 150]], dtype=np.float32)
 
         score_map, geo_map = dataset.compute_quad_maps([quad])
 
@@ -398,9 +395,7 @@ class TestEASTDataset:
         img_dir, ann_file = simple_dataset
         dataset = EASTDataset(img_dir, ann_file, target_size=512, score_geo_scale=0.25)
 
-        quad1 = np.array(
-            [[20, 20], [80, 20], [80, 60], [20, 60]], dtype=np.float32
-        )
+        quad1 = np.array([[20, 20], [80, 20], [80, 60], [20, 60]], dtype=np.float32)
         quad2 = np.array(
             [[100, 100], [200, 100], [200, 180], [100, 180]], dtype=np.float32
         )
@@ -427,9 +422,7 @@ class TestEASTDataset:
     def test_east_dataset_segmentation_variants(self, tmp_path):
         """Test various segmentation formats"""
         annotations = {
-            "images": [
-                {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}
-            ],
+            "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
                 # Variant 1: simple list
                 {
@@ -569,9 +562,7 @@ class TestEASTDatasetEdgeCases:
     def simple_dataset(self, tmp_path):
         """Creates a simple dataset with one image"""
         annotations = {
-            "images": [
-                {"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}
-            ],
+            "images": [{"id": 1, "file_name": "test.jpg", "width": 640, "height": 480}],
             "annotations": [
                 {
                     "id": 1,

@@ -4,7 +4,13 @@ import pytest
 
 
 def pytest_collection_modifyitems(config, items):
-    """Automatically skip tests in training modules if torch is not available."""
+    """
+    Mark tests that require torch for skipping when torch is unavailable.
+
+    Note: This only works for tests that can be imported. Tests in modules
+    that directly import torch-dependent code will fail during collection.
+    Use --ignore flags in pytest command to skip those modules entirely.
+    """
     try:
         import torch  # noqa: F401
 
@@ -17,21 +23,7 @@ def pytest_collection_modifyitems(config, items):
             reason="PyTorch not installed (required for training/export)"
         )
 
-        # Skip entire test modules that require torch
-        torch_required_modules = [
-            "test_east.py",  # PyTorch model tests
-            "test_dataset.py",  # Dataset tests
-            "test_loss.py",  # Loss function tests
-            "test_sam.py",  # SAM optimizer tests
-            "test_train_utils.py",  # Training utilities
-            "test_east_train_export.py",  # Train/export tests
-        ]
-
         for item in items:
-            # Skip if test is in a module that requires torch
-            if any(module in str(item.fspath) for module in torch_required_modules):
-                item.add_marker(skip_torch)
-
             # Skip if test has requires_torch marker
             if "requires_torch" in item.keywords:
                 item.add_marker(skip_torch)
