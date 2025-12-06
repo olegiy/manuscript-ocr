@@ -5,21 +5,33 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import cv2
 import numpy as np
 import onnxruntime as ort
-import torch
-from torch.utils.data import ConcatDataset
 
 from manuscript.api.base import BaseModel
 
 from ...data import Block, Line, Page, Word
 from ...utils import read_image, sort_into_lines, segment_columns
-from .dataset import EASTDataset
-from .east import EASTModel
 from .lanms import locality_aware_nms
-from .train_utils import _run_training
 from .utils import (
     decode_quads_from_maps,
     expand_boxes,
 )
+
+# Optional imports for training (not needed for inference)
+try:
+    import torch
+    from torch.utils.data import ConcatDataset
+    from .dataset import EASTDataset
+    from .east import EASTModel
+    from .train_utils import _run_training
+
+    _TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    ConcatDataset = None
+    EASTDataset = None
+    EASTModel = None
+    _run_training = None
+    _TORCH_AVAILABLE = False
 
 
 class EAST(BaseModel):
@@ -458,8 +470,8 @@ class EAST(BaseModel):
         resume_from: Optional[Union[str, Path]] = None,
         val_interval: int = 1,
         num_workers: int = 0,
-        device: Optional[torch.device] = None,
-    ) -> torch.nn.Module:
+        device: Optional["torch.device"] = None,
+    ) -> "torch.nn.Module":
         """
         Train EAST model on custom datasets.
 
@@ -592,6 +604,11 @@ class EAST(BaseModel):
         ... )
         >>> print("Best checkpoint loaded:", best_model)
         """
+        if not _TORCH_AVAILABLE:
+            raise ImportError(
+                "PyTorch is required for training. "
+                "Install with: pip install manuscript-ocr[dev]"
+            )
 
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -869,6 +886,11 @@ class EAST(BaseModel):
         --------
         EAST.__init__ : Initialize EAST detector with ONNX support using ``use_onnx=True``.
         """
+        if not _TORCH_AVAILABLE:
+            raise ImportError(
+                "PyTorch is required for exporting models. "
+                "Install with: pip install manuscript-ocr[dev]"
+            )
 
         class EASTWrapper(torch.nn.Module):
             def __init__(self, east_model):

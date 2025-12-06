@@ -12,7 +12,16 @@ from manuscript.api.base import BaseModel
 from manuscript.utils import read_image
 
 from .data.transforms import load_charset
-from .training.train import Config, run_training
+
+# Optional imports for training (not needed for inference)
+try:
+    from .training.train import Config, run_training
+
+    _TRAINING_AVAILABLE = True
+except ImportError:
+    Config = None
+    run_training = None
+    _TRAINING_AVAILABLE = False
 
 
 class TRBA(BaseModel):
@@ -23,14 +32,14 @@ class TRBA(BaseModel):
     ----------
     weights : str or Path, optional
         Path or identifier for ONNX model weights. Supports:
-        
+
         - Local file path: ``"path/to/model.onnx"``
         - HTTP/HTTPS URL: ``"https://example.com/model.onnx"``
         - GitHub release: ``"github://owner/repo/tag/file.onnx"``
         - Google Drive: ``"gdrive:FILE_ID"``
         - Preset name: ``"trba_lite_g1"`` or ``"trba_base_g1"`` (from pretrained_registry)
         - ``None``: auto-downloads default preset (trba_lite_g1)
-        
+
     config : str or Path, optional
         Path or identifier for model configuration JSON. Same URL schemes
         as ``weights``. If ``None``, attempts to infer from weights location
@@ -85,18 +94,19 @@ class TRBA(BaseModel):
 
     >>> recognizer = TRBA(weights="model.onnx", device="cpu")
     """
+
     default_weights_name = "trba_lite_g1"
-    
+
     pretrained_registry = {
         "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.onnx",
         "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.onnx",
     }
-    
+
     config_registry = {
         "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.json",
         "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.json",
     }
-    
+
     charset_registry = {
         "trba_lite_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_lite_g1.txt",
         "trba_base_g1": "github://konstantinkozhin/manuscript-ocr/v0.1.0/trba_base_g1.txt",
@@ -112,17 +122,17 @@ class TRBA(BaseModel):
     ):
         # Initialize BaseModel (resolves weights and device)
         super().__init__(weights=weights, device=device, **kwargs)
-        
+
         # Resolve config
         self.config_path = self._resolve_config(config)
-        
+
         # Resolve charset
         self.charset_path = self._resolve_charset(charset)
 
         # Load config
         if not Path(self.config_path).exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
-        
+
         with open(self.config_path, "r", encoding="utf-8") as f:
             config_dict = json.load(f)
 
@@ -138,7 +148,7 @@ class TRBA(BaseModel):
         # Load charset
         if not Path(self.charset_path).exists():
             raise FileNotFoundError(f"Charset file not found: {self.charset_path}")
-        
+
         self.itos, self.stoi = load_charset(self.charset_path)
         self.pad_id = self.stoi["<PAD>"]
         self.sos_id = self.stoi["<SOS>"]
@@ -148,7 +158,7 @@ class TRBA(BaseModel):
         # Verify ONNX file exists
         if not Path(self.weights).exists():
             raise FileNotFoundError(f"Model file not found: {self.weights}")
-        
+
         if Path(self.weights).suffix.lower() != ".onnx":
             raise ValueError(f"Expected .onnx file, got: {self.weights}")
 
@@ -159,7 +169,7 @@ class TRBA(BaseModel):
         """
         Resolve config path using BaseModel's artifact resolution.
         Falls back to inferring from weights location.
-        
+
         Search order:
         1. Explicit config parameter (if provided)
         2. Preset name from config_registry (if weights stem matches)
@@ -172,36 +182,39 @@ class TRBA(BaseModel):
                 config,
                 default_name=None,
                 registry=self.config_registry,
-                description="config"
+                description="config",
             )
-        
+
         # Try to infer from weights location
         weights_path = Path(self.weights)
         weights_stem = weights_path.stem
-        
+
         # 1. Try preset name in config registry
         if weights_stem in self.config_registry:
             return self._resolve_extra_artifact(
                 weights_stem,
                 default_name=None,
                 registry=self.config_registry,
-                description="config"
+                description="config",
             )
-        
+
         # 2. Try same filename with .json extension (e.g., model.onnx → model.json)
         config_candidate = weights_path.with_suffix(".json")
         if config_candidate.exists():
             return str(config_candidate.absolute())
-        
+
         # 3. Use default preset config
-        if self.default_weights_name and self.default_weights_name in self.config_registry:
+        if (
+            self.default_weights_name
+            and self.default_weights_name in self.config_registry
+        ):
             return self._resolve_extra_artifact(
                 self.default_weights_name,
                 default_name=None,
                 registry=self.config_registry,
-                description="config"
+                description="config",
             )
-        
+
         raise FileNotFoundError(
             f"Could not find config file for weights: {self.weights}. "
             f"Expected config at: {config_candidate}. "
@@ -212,7 +225,7 @@ class TRBA(BaseModel):
         """
         Resolve charset path using BaseModel's artifact resolution.
         Falls back to inferring from weights location or package default.
-        
+
         Search order:
         1. Explicit charset parameter (if provided)
         2. Preset name from charset_registry (if weights stem matches)
@@ -226,42 +239,45 @@ class TRBA(BaseModel):
                 charset,
                 default_name=None,
                 registry=self.charset_registry,
-                description="charset"
+                description="charset",
             )
-        
+
         # Try to infer from weights location
         weights_path = Path(self.weights)
         weights_stem = weights_path.stem
-        
+
         # 1. Try preset name in charset registry
         if weights_stem in self.charset_registry:
             return self._resolve_extra_artifact(
                 weights_stem,
                 default_name=None,
                 registry=self.charset_registry,
-                description="charset"
+                description="charset",
             )
-        
+
         # 2. Try same filename with .txt extension (e.g., model.onnx → model.txt)
         charset_candidate = weights_path.with_suffix(".txt")
         if charset_candidate.exists():
             return str(charset_candidate.absolute())
-        
+
         # 3. Try default preset charset
-        if self.default_weights_name and self.default_weights_name in self.charset_registry:
+        if (
+            self.default_weights_name
+            and self.default_weights_name in self.charset_registry
+        ):
             return self._resolve_extra_artifact(
                 self.default_weights_name,
                 default_name=None,
                 registry=self.charset_registry,
-                description="charset"
+                description="charset",
             )
-        
+
         # 4. Fallback to package default charset
         current_dir = Path(__file__).parent
         package_charset = current_dir / "configs" / "charset.txt"
         if package_charset.exists():
             return str(package_charset.absolute())
-        
+
         raise FileNotFoundError(
             f"Could not find charset file. "
             f"Expected charset at: {charset_candidate} or {package_charset}. "
@@ -281,17 +297,17 @@ class TRBA(BaseModel):
     ) -> np.ndarray:
         """
         Preprocess image for ONNX inference. Returns [1, 3, H, W] numpy array.
-        
+
         Applies same preprocessing as training:
         1. Load image (supports str, Path, np.ndarray, PIL.Image)
         2. Resize with aspect ratio preservation and padding
         3. Normalize with mean=0.5, std=0.5
-        
+
         Parameters
         ----------
         image : str, Path, np.ndarray, or PIL.Image
             Input image in any supported format.
-            
+
         Returns
         -------
         np.ndarray
@@ -299,38 +315,38 @@ class TRBA(BaseModel):
         """
         # Load image using unified read_image utility (handles all formats)
         img = read_image(image)  # Returns RGB uint8 [H, W, 3]
-        
+
         # Resize with aspect ratio preservation and padding (like ResizeAndPadA)
         h, w = img.shape[:2]
         scale = min(self.img_h / max(h, 1), self.img_w / max(w, 1))
         new_w = max(1, int(round(w * scale)))
         new_h = max(1, int(round(h * scale)))
-        
+
         # Choose interpolation
         if new_h < h or new_w < w:
             interp = cv2.INTER_AREA
         else:
             interp = cv2.INTER_LINEAR
-        
+
         img_resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
-        
+
         # Create white canvas and paste resized image
         canvas = np.full((self.img_h, self.img_w, 3), 255, dtype=np.uint8)
-        
+
         # Center vertically, left align horizontally
         y_offset = (self.img_h - new_h) // 2
         x_offset = 0
-        
-        canvas[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = img_resized
-        
+
+        canvas[y_offset : y_offset + new_h, x_offset : x_offset + new_w] = img_resized
+
         # Normalize: mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)
         # Equivalent to: (x / 255.0 - 0.5) / 0.5 = (x - 127.5) / 127.5
         img_normalized = (canvas.astype(np.float32) - 127.5) / 127.5
-        
+
         # Convert to CHW format and add batch dimension
         img_chw = np.transpose(img_normalized, (2, 0, 1))  # HWC -> CHW
         img_batch = np.expand_dims(img_chw, axis=0)  # [1, 3, H, W]
-        
+
         return img_batch
 
     def predict(
@@ -403,28 +419,27 @@ class TRBA(BaseModel):
             for img in batch_images:
                 tensor = self._preprocess_image(img)  # [1, 3, H, W]
                 batch_tensors.append(tensor[0])  # Remove batch dim
-            
+
             batch_input = np.stack(batch_tensors, axis=0)  # [B, 3, H, W]
 
             # ONNX inference
             input_name = self.onnx_session.get_inputs()[0].name
             output_name = self.onnx_session.get_outputs()[0].name
-            
+
             ort_outputs = self.onnx_session.run(
-                [output_name],
-                {input_name: batch_input}
+                [output_name], {input_name: batch_input}
             )
             logits = ort_outputs[0]  # [B, max_length, num_classes]
 
             # Decode predictions
             preds = np.argmax(logits, axis=-1)  # [B, max_length]
-            
+
             # Calculate confidence (softmax + mean log prob)
             probs = self._softmax(logits, axis=-1)  # [B, T, num_classes]
 
             for j in range(len(batch_images)):
                 pred_row = preds[j]  # [max_length]
-                
+
                 # Decode to text
                 decoded_chars = []
                 for token_id in pred_row:
@@ -433,9 +448,9 @@ class TRBA(BaseModel):
                     if token_id not in [self.pad_id, self.sos_id]:
                         if token_id < len(self.itos):
                             decoded_chars.append(self.itos[token_id])
-                
+
                 text = "".join(decoded_chars)
-                
+
                 # Calculate confidence
                 seq_probs = []
                 for t, token_id in enumerate(pred_row):
@@ -443,9 +458,9 @@ class TRBA(BaseModel):
                         break
                     if token_id not in [self.pad_id, self.sos_id]:
                         seq_probs.append(probs[j, t, token_id])
-                
+
                 confidence = float(np.mean(seq_probs)) if seq_probs else 0.0
-                
+
                 results.append({"text": text, "confidence": confidence})
 
         return results
@@ -686,6 +701,11 @@ class TRBA(BaseModel):
         ...     epochs=100,
         ... )
         """
+        if not _TRAINING_AVAILABLE:
+            raise ImportError(
+                "Training dependencies not available. "
+                "Install with: pip install manuscript-ocr[dev]"
+            )
 
         def _ensure_path_list(
             value: Optional[Union[str, Sequence[Optional[str]]]],
@@ -926,32 +946,34 @@ class TRBA(BaseModel):
 
         # Load config
         print(f"Loading config from {config_path}...")
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
         # Extract model parameters
-        max_length = config.get('max_len', 40)
-        img_h = config.get('img_h', 64)
-        img_w = config.get('img_w', 256)
-        hidden_size = config.get('hidden_size', 256)
-        num_encoder_layers = config.get('num_encoder_layers', 2)
-        cnn_in_channels = config.get('cnn_in_channels', 3)
-        cnn_out_channels = config.get('cnn_out_channels', 512)
-        cnn_backbone = config.get('cnn_backbone', 'seresnet31')
-        
+        max_length = config.get("max_len", 40)
+        img_h = config.get("img_h", 64)
+        img_w = config.get("img_w", 256)
+        hidden_size = config.get("hidden_size", 256)
+        num_encoder_layers = config.get("num_encoder_layers", 2)
+        cnn_in_channels = config.get("cnn_in_channels", 3)
+        cnn_out_channels = config.get("cnn_out_channels", 512)
+        cnn_backbone = config.get("cnn_backbone", "seresnet31")
+
         # Load charset to determine num_classes
         print(f"Loading charset from {charset_path}...")
         itos, stoi = load_charset(str(charset_path))
-        num_classes = len(itos)  # itos already includes special tokens (PAD, SOS, EOS, BLANK, ...)
+        num_classes = len(
+            itos
+        )  # itos already includes special tokens (PAD, SOS, EOS, BLANK, ...)
         print(f"Charset loaded: {len(itos)} total classes (including special tokens)")
         print(f"  First 4 tokens (special): {itos[:4]}")
         print(f"  Regular characters: {len(itos) - 4}")
-        
+
         # Load weights
         print(f"\nLoading checkpoint from {weights_path}...")
-        checkpoint = torch.load(str(weights_path), map_location='cpu')
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
+        checkpoint = torch.load(str(weights_path), map_location="cpu")
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
         else:
             state_dict = checkpoint
 
@@ -979,7 +1001,7 @@ class TRBA(BaseModel):
             blank_id=stoi.get("<BLANK>", None),
             use_ctc_head=False,
         )
-        
+
         print(f"   Token IDs:")
         print(f"      SOS:   {stoi['<SOS>']}")
         print(f"      EOS:   {stoi['<EOS>']}")
@@ -997,7 +1019,9 @@ class TRBA(BaseModel):
         # Create ONNX wrapper
         print(f"\nCreating ONNX wrapper...")
         print(f"   max_length from config: {max_length}")
-        print(f"   ONNX will use: {max_length + 1} steps (max_length + 1 for compatibility)")
+        print(
+            f"   ONNX will use: {max_length + 1} steps (max_length + 1 for compatibility)"
+        )
         onnx_model = TRBAONNXWrapper(model, max_length=max_length + 1)
         onnx_model.eval()
 
@@ -1055,7 +1079,9 @@ class TRBA(BaseModel):
                 else:
                     print("[WARNING] Simplification failed, using original model")
             except ImportError:
-                print("[WARNING] onnx-simplifier not installed, skipping simplification")
+                print(
+                    "[WARNING] onnx-simplifier not installed, skipping simplification"
+                )
                 print("  Install with: pip install onnx-simplifier")
 
         # Test ONNX inference

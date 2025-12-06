@@ -32,7 +32,7 @@ jobs:
       - name: Check for dependency conflicts
         run: pip check
 
-      - name: Run all tests with coverage
+      - name: Run inference-only tests (PyTorch-dependent tests will be skipped)
         run: pytest tests/ -v --cov=src --cov-report=xml
 
   test-dev-installation:
