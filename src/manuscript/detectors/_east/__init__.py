@@ -9,7 +9,7 @@ import onnxruntime as ort
 from manuscript.api.base import BaseModel
 
 from ...data import Block, Line, Page, Word
-from ...utils import read_image, sort_into_lines, segment_columns
+from ...utils import read_image, organize_page
 from .lanms import locality_aware_nms
 from .utils import (
     decode_quads_from_maps,
@@ -159,7 +159,7 @@ class EAST(BaseModel):
             self.weights,
             providers=providers,
         )
-        
+
         self._log_device_info(self.onnx_session)
 
     def _scale_boxes_to_original(
@@ -384,57 +384,18 @@ class EAST(BaseModel):
             else processed_quads
         )
 
-        # Create Word objects from quads
         words: List[Word] = []
         for quad in output_quads:
             pts = quad[:8].reshape(4, 2)
             score = float(np.clip(quad[8], 0.0, 1.0))
             words.append(Word(polygon=pts.tolist(), detection_confidence=score))
 
-        # Build Page structure with Lines
         if sort_reading_order and len(words) > 0:
-            # Convert words to boxes for sorting
-            word_to_box = {}
-            boxes = []
-            for w in words:
-                poly = np.array(w.polygon, dtype=np.int32)
-                x_min, y_min = np.min(poly, axis=0)
-                x_max, y_max = np.max(poly, axis=0)
-                box = (int(x_min), int(y_min), int(x_max), int(y_max))
-                boxes.append(box)
-                word_to_box[box] = w
-
-            # Segment into columns
-            columns = segment_columns(boxes, max_splits=10)
-
-            # Create blocks from columns
-            blocks: List[Block] = []
-            for block_idx, column_boxes in enumerate(columns):
-                # Sort this column into lines
-                lines_in_column = sort_into_lines(column_boxes, use_columns=False)
-
-                # Convert to Line objects with ordered Words
-                lines: List[Line] = []
-                for line_idx, line_boxes in enumerate(lines_in_column):
-                    line_words = []
-                    for word_idx, box in enumerate(line_boxes):
-                        word = word_to_box[box]
-                        # Set word order within the line
-                        word.order = word_idx
-                        line_words.append(word)
-
-                    # Create Line with order
-                    line = Line(words=line_words, order=line_idx)
-                    lines.append(line)
-
-                # Create Block for this column
-                block = Block(lines=lines, order=block_idx)
-                blocks.append(block)
-
-            # Create Page with multiple Blocks (one per column)
-            page = Page(blocks=blocks)
+            initial_page = Page(
+                blocks=[Block(lines=[Line(words=words, order=0)], order=0)]
+            )
+            page = organize_page(initial_page, max_splits=10, use_columns=True)
         else:
-            # No sorting - put all words in single line in single block
             for idx, w in enumerate(words):
                 w.order = idx
             page = Page(blocks=[Block(lines=[Line(words=words, order=0)], order=0)])

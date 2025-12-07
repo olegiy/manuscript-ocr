@@ -2,6 +2,8 @@ from typing import List, Tuple
 
 import numpy as np
 
+from ..data import Block, Line, Page, Word
+
 
 def resolve_intersections(
     boxes: List[Tuple[float, float, float, float]],
@@ -302,3 +304,116 @@ def _sort_column_into_lines(
         result.append(original_line)
 
     return result
+
+
+def organize_page(
+    page: Page,
+    max_splits: int = 10,
+    use_columns: bool = True,
+) -> Page:
+    """
+    Organize words in a Page into structured Blocks, Lines, and reading order.
+
+    Takes a Page with unorganized words and returns a new Page where:
+    - Words are grouped into columns (Blocks)
+    - Each Block contains Lines of Words
+    - Words within Lines are ordered left-to-right
+    - Lines within Blocks are ordered top-to-bottom
+    - Blocks are ordered left-to-right (for columns)
+
+    Parameters
+    ----------
+    page : Page
+        Input Page object. Can contain either:
+        - Words in unstructured blocks/lines
+        - Direct list of words without proper organization
+    max_splits : int, optional
+        Maximum number of column splits to attempt when segmenting.
+        Higher values allow more columns to be detected. Default is 10.
+    use_columns : bool, optional
+        If True, segments the page into columns (separate Blocks).
+        If False, treats entire page as single column. Default is True.
+
+    Returns
+    -------
+    Page
+        New Page object with organized Blocks, Lines, and reading order set.
+
+    Examples
+    --------
+    >>> from manuscript.detectors import EAST
+    >>> from manuscript.utils import organize_page
+    >>>
+    >>> detector = EAST()
+    >>> result = detector.predict("image.jpg", sort_reading_order=False)
+    >>> page = result["page"]
+    >>>
+    >>> # Organize into structured reading order
+    >>> organized_page = organize_page(page, max_splits=5)
+    >>>
+    >>> # Access first word in first line of first block
+    >>> first_word = organized_page.blocks[0].lines[0].words[0]
+    >>> print(f"Word order: {first_word.order}")
+
+    Notes
+    -----
+    This function extracts all words from the input Page (regardless of their
+    current organization), converts them to bounding boxes, performs column
+    segmentation and line sorting, then rebuilds a clean Page structure.
+
+    The function preserves all Word attributes (polygon, confidence, text, etc.)
+    while updating the `order` field for reading sequence.
+    """
+    # Extract all words from the page
+    all_words: List[Word] = []
+    for block in page.blocks:
+        for line in block.lines:
+            all_words.extend(line.words)
+
+    # If no words found, return empty page
+    if not all_words:
+        return Page(blocks=[Block(lines=[Line(words=[], order=0)], order=0)])
+
+    # Convert words to boxes for sorting
+    word_to_box = {}
+    boxes = []
+    for word in all_words:
+        poly = np.array(word.polygon, dtype=np.int32)
+        x_min, y_min = np.min(poly, axis=0)
+        x_max, y_max = np.max(poly, axis=0)
+        box = (int(x_min), int(y_min), int(x_max), int(y_max))
+        boxes.append(box)
+        word_to_box[box] = word
+
+    # Segment into columns if requested
+    if use_columns:
+        columns = segment_columns(boxes, max_splits=max_splits)
+    else:
+        columns = [boxes]
+
+    # Create blocks from columns
+    blocks: List[Block] = []
+    for block_idx, column_boxes in enumerate(columns):
+        # Sort this column into lines
+        lines_in_column = sort_into_lines(column_boxes, use_columns=False)
+
+        # Convert to Line objects with ordered Words
+        lines: List[Line] = []
+        for line_idx, line_boxes in enumerate(lines_in_column):
+            line_words = []
+            for word_idx, box in enumerate(line_boxes):
+                word = word_to_box[box]
+                # Set word order within the line
+                word.order = word_idx
+                line_words.append(word)
+
+            # Create Line with order
+            line = Line(words=line_words, order=line_idx)
+            lines.append(line)
+
+        # Create Block for this column
+        block = Block(lines=lines, order=block_idx)
+        blocks.append(block)
+
+    # Create Page with organized Blocks
+    return Page(blocks=blocks)

@@ -4,8 +4,11 @@ from manuscript.detectors import EAST
 from manuscript.recognizers import TRBA
 from manuscript.utils.visualization import visualize_page
 
-image_path = r"example/ocr_example_image.jpg"
-pipeline = Pipeline(detector=EAST(device="coreml"), recognizer=TRBA(weights="trba_base_g1", device="coreml"))
+image_path = r"C:\Users\pasha\OneDrive\Рабочий стол\Dataset of handwritten school essays in Russian\Dataset of handwritten school essays in Russian\handwritten_essay\train\0\0.png"
+pipeline = Pipeline(
+    detector=EAST(),
+    recognizer=TRBA(weights="trba_lite_g1"),
+)
 
 start = time.perf_counter()
 result = pipeline.predict(image_path)

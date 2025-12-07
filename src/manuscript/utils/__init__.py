@@ -16,7 +16,12 @@ from .visualization import (
 )
 
 # Sorting and postprocessing utilities
-from .sorting import resolve_intersections, sort_into_lines, segment_columns
+from .sorting import (
+    resolve_intersections,
+    sort_into_lines,
+    segment_columns,
+    organize_page,
+)
 
 # Metrics and evaluation utilities
 from .metrics import (
@@ -44,6 +49,7 @@ __all__ = [
     "resolve_intersections",
     "sort_into_lines",
     "segment_columns",
+    "organize_page",
     # Metrics
     "match_boxes",
     "compute_f1_score",

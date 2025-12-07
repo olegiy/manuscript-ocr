@@ -68,6 +68,7 @@ dev = [
     # Training utilities
     "torch-optimizer>=0.1",
     "evaluate>=0.4",
+    "jiwer>=2.2",  # Required for evaluate CER/WER metrics
     "matplotlib>=3.3",
     "albumentations>=1.0",
     "tensorboard>=2.4",
