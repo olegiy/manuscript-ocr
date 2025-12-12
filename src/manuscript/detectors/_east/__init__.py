@@ -268,6 +268,8 @@ class EAST(BaseModel):
         img_or_path: Union[str, Path, np.ndarray],
         return_maps: bool = False,
         sort_reading_order: bool = True,
+        split_into_columns: bool = True,
+        max_columns: int = 10,
     ) -> Dict[str, Any]:
         """
         Run EAST inference and return detection results.
@@ -284,6 +286,15 @@ class EAST(BaseModel):
             If True, sorts detected words in natural reading order
             (left-to-right, top-to-bottom) and groups them into text lines.
             Default is True.
+        split_into_columns : bool, optional
+            If True and ``sort_reading_order=True``, segments the page into
+            columns (separate Blocks). If False, treats entire page as single
+            column. Only used when ``sort_reading_order=True``. Default is True.
+        max_columns : int, optional
+            Maximum number of columns to detect when ``split_into_columns=True``.
+            Higher values allow more columns to be detected. Only used when
+            ``sort_reading_order=True`` and ``split_into_columns=True``.
+            Default is 10.
 
         Returns
         -------
@@ -394,7 +405,11 @@ class EAST(BaseModel):
             initial_page = Page(
                 blocks=[Block(lines=[Line(words=words, order=0)], order=0)]
             )
-            page = organize_page(initial_page, max_splits=10, use_columns=True)
+            page = organize_page(
+                initial_page,
+                max_splits=max_columns,
+                use_columns=split_into_columns
+            )
         else:
             for idx, w in enumerate(words):
                 w.order = idx

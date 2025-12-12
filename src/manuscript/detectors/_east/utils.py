@@ -12,8 +12,8 @@ except ImportError:
     torch = None
     _TORCH_AVAILABLE = False
 
-from ...utils.visualization import draw_quads
-from ...utils.io import tensor_to_image
+from ...utils.visualization import _draw_quads
+from ...utils.io import _tensor_to_image
 
 
 def create_collage(
@@ -34,10 +34,10 @@ def create_collage(
 
     n_rows, n_cols = 2, 10
     collage = np.full((cell_size * n_rows, cell_size * n_cols, 3), 255, dtype=np.uint8)
-    orig = tensor_to_image(img_tensor)
+    orig = _tensor_to_image(img_tensor)
 
     # GT
-    gt_img = np.array(draw_quads(orig, gt_quads, color=(0, 255, 0)))
+    gt_img = np.array(_draw_quads(orig, gt_quads, color=(0, 255, 0)))
     gt_score = (
         gt_score_map.detach().cpu().numpy().squeeze()
         if isinstance(gt_score_map, torch.Tensor)
@@ -59,7 +59,7 @@ def create_collage(
 
     # Pred
     if pred_score_map is not None and pred_geo_map is not None:
-        pred_img = np.array(draw_quads(orig, pred_quads, color=(0, 0, 255)))
+        pred_img = np.array(_draw_quads(orig, pred_quads, color=(0, 0, 255)))
         pred_score = (
             pred_score_map.detach().cpu().numpy().squeeze()
             if isinstance(pred_score_map, torch.Tensor)

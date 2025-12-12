@@ -3,11 +3,11 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 from tqdm import tqdm
 
-from .geometry import box_iou
+from .geometry import _box_iou
 
 
 # может не нужна
-def match_boxes(
+def _match_boxes(
     pred_boxes: List[Tuple[float, float, float, float]],
     gt_boxes: List[Tuple[float, float, float, float]],
     iou_threshold: float = 0.5,
@@ -55,7 +55,7 @@ def match_boxes(
     iou_matrix = np.zeros((len(pred_boxes), len(gt_boxes)))
     for i, pred in enumerate(pred_boxes):
         for j, gt in enumerate(gt_boxes):
-            iou_matrix[i, j] = box_iou(pred, gt)
+            iou_matrix[i, j] = _box_iou(pred, gt)
     
     # Greedy matching: sort all (iou, pred_idx, gt_idx) tuples by IoU
     matches = []
@@ -83,7 +83,7 @@ def match_boxes(
     return tp, fp, fn
 
 # может не нужна
-def compute_f1_score(
+def _compute_f1_score(
     true_positives: int,
     false_positives: int,
     false_negatives: int,
@@ -154,13 +154,13 @@ def _evaluate_image_worker(args):
     results = {}
     
     for threshold in iou_thresholds:
-        tp, fp, fn = match_boxes(pred_boxes, gt_boxes, iou_threshold=threshold)
+        tp, fp, fn = _match_boxes(pred_boxes, gt_boxes, iou_threshold=threshold)
         results[threshold] = (tp, fp, fn)
     
     return results
 
 # может не нужна будет (потом)
-def evaluate_dataset(
+def _evaluate_dataset(
     predictions: Dict[str, List[Tuple[float, float, float, float]]],
     ground_truths: Dict[str, List[Tuple[float, float, float, float]]],
     iou_thresholds: Optional[List[float]] = None,
@@ -282,7 +282,7 @@ def evaluate_dataset(
             gt_boxes = ground_truths.get(image_id, [])
             
             for threshold in iou_thresholds:
-                tp, fp, fn = match_boxes(pred_boxes, gt_boxes, iou_threshold=threshold)
+                tp, fp, fn = _match_boxes(pred_boxes, gt_boxes, iou_threshold=threshold)
                 total_tp[threshold] += tp
                 total_fp[threshold] += fp
                 total_fn[threshold] += fn
@@ -296,7 +296,7 @@ def evaluate_dataset(
         fp = total_fp[threshold]
         fn = total_fn[threshold]
         
-        f1, precision, recall = compute_f1_score(tp, fp, fn)
+        f1, precision, recall = _compute_f1_score(tp, fp, fn)
         
         # Store with formatted keys
         results[f"f1@{threshold:.2f}"] = f1

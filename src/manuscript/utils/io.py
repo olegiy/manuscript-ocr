@@ -95,7 +95,7 @@ def read_image(img_or_path: Union[str, Path, bytes, np.ndarray, Image.Image]) ->
     return img
 
 
-def tensor_to_image(
+def _tensor_to_image(
     tensor: "torch.Tensor",  # type: ignore
     denormalize: dict = None,
     to_uint8: bool = True,

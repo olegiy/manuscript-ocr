@@ -218,49 +218,6 @@ class Pipeline:
 
         return result
 
-    def process_batch(
-        self,
-        images: List[Union[str, Path, np.ndarray, Image.Image]],
-        recognize_text: bool = True,
-        vis: bool = False,
-        profile: bool = False,
-    ) -> List[Union[Dict, tuple]]:
-        """
-        Process multiple images in sequence.
-
-        Parameters
-        ----------
-        images : list
-            List of images to process. Each can be str, Path, numpy.ndarray, or PIL.Image.
-        recognize_text : bool, optional
-            If True, performs recognition. Default is True.
-        vis : bool, optional
-            If True, returns visualization for each image. Default is False.
-        profile : bool, optional
-            If True, prints timing information. Default is False.
-
-        Returns
-        -------
-        list
-            List of results (dict or tuple) for each input image.
-
-        Examples
-        --------
-        >>> pipeline = Pipeline()
-        >>> images = ["page1.jpg", "page2.jpg", "page3.jpg"]
-        >>> results = pipeline.process_batch(images)
-        >>> for result in results:
-        ...     text = pipeline.get_text(result["page"])
-        ...     print(text)
-        """
-        results = []
-        for img in images:
-            res = self.predict(
-                img, recognize_text=recognize_text, vis=vis, profile=profile
-            )
-            results.append(res)
-        return results
-
     def get_text(self, page: Page) -> str:
         """
         Extract plain text from Page object.
@@ -291,114 +248,24 @@ class Pipeline:
                     lines.append(" ".join(texts))
         return "\n".join(lines)
 
-    def correct_text_with_llm(
-        self,
-        text: str,
-        api_key: Optional[str] = None,
-        api_url: Optional[str] = None,
-        model: str = "gpt-4o-2024-08-06",
-        temperature: float = 0.0,
-        system_prompt: Optional[str] = None,
-    ) -> str:
-        """
-        Correct OCR errors in plain text using LLM.
-
-        Parameters
-        ----------
-        text : str
-            OCR text to correct.
-        api_key : str, optional
-            OpenAI API key. If None, uses "dummy_key" (for local models).
-        api_url : str, optional
-            API endpoint URL. If None, uses OpenAI default.
-        model : str, optional
-            Model name. Default is "gpt-4o-2024-08-06".
-        temperature : float, optional
-            Sampling temperature. Default is 0.0.
-        system_prompt : str, optional
-            Custom system prompt. If None, uses default correction prompt.
-
-        Returns
-        -------
-        str
-            Corrected text.
-
-        Examples
-        --------
-        >>> pipeline = Pipeline()
-        >>> result = pipeline.predict("document.jpg")
-        >>> text = pipeline.get_text(result["page"])
-        >>> corrected = pipeline.correct_text_with_llm(text, api_url="https://demo.ai.sfu-kras.ru/v1")
-        """
-        import openai
-
-        # Configure OpenAI client
-        openai.api_key = api_key or "dummy_key"
-        if api_url:
-            openai.api_base = api_url
-            openai.api_type = "openai"
-            openai.api_version = None
-
-        # Default system prompt
-        if system_prompt is None:
-            system_prompt = """You are an advanced OCR text correction assistant.
-
-        Your task is to restore the original intended human-written text from noisy OCR output.
-
-        RULES:
-        1. Correct all OCR-related errors:
-        - misrecognized characters (e.g., "0"→"О", "Cl"→"Л", "rn"→"m")
-        - broken or merged words ("чувств а" → "чувства", "мир а" → "мира")
-        - repeated fragments or duplicated words caused by OCR
-        - missing or extra letters
-        - incorrect casing and random capitalization
-        - incorrect endings, cases, verb forms, grammatical errors caused by OCR noise
-
-        2. Improve readability by restoring proper:
-        - spelling
-        - grammar
-        - word forms
-        - punctuation
-        - sentence boundaries
-        - paragraph structure
-
-        3. Preserve:
-        - original line breaks
-        - original paragraph boundaries
-        - the overall semantic meaning
-        - the style of the author (do NOT rewrite or paraphrase)
-
-        4. Do NOT:
-        - add new content
-        - change the meaning
-        - summarize or rewrite stylistically
-        - remove lines
-        - merge paragraphs
-        - introduce new ideas or interpretations
-
-        5. Your output must contain ONLY the corrected text.
-        No explanations, no comments, no metadata.
-
-        Your goal is to produce the cleanest, most accurate reconstruction of the original text while preserving structure."""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Correct OCR errors in this text:\n\n{text}"},
-        ]
-
-        # Call OpenAI API
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-        )
-
-        corrected_text = response.choices[0].message.content.strip()
-        return corrected_text
-
     def _extract_word_image(
         self, image: np.ndarray, polygon: np.ndarray
     ) -> Optional[np.ndarray]:
+        """
+        Extract word region from image using polygon coordinates.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Input image (H, W, 3)
+        polygon : np.ndarray
+            Polygon coordinates [[x1,y1], [x2,y2], ...]
+
+        Returns
+        -------
+        np.ndarray or None
+            Cropped word image or None if extraction failed
+        """
         try:
             x_min, y_min = np.min(polygon, axis=0)
             x_max, y_max = np.max(polygon, axis=0)
@@ -413,153 +280,4 @@ class Pipeline:
 
             return region_image if region_image.size > 0 else None
         except Exception:
-            return None
-
-    def correct_with_llm(
-        self,
-        page: Page,
-        api_key: Optional[str] = None,
-        api_url: Optional[str] = None,
-        model: str = "gpt-4o-2024-08-06",
-        temperature: float = 0.0,
-        system_prompt: Optional[str] = None,
-    ) -> Page:
-        """Correct OCR errors using LLM via OpenAI library with 1-to-1 word mapping."""
-        import json
-        import openai
-
-        # Configure OpenAI client
-        openai.api_key = api_key or "dummy_key"
-        if api_url:
-            openai.api_base = api_url
-            openai.api_type = "openai"
-            openai.api_version = None
-
-        # Extract only text structure (without coordinates and confidence)
-        structure = []
-        for block in page.blocks:
-            block_lines = []
-            for line in block.lines:
-                words_text = [w.text if w.text else "" for w in line.words]
-                block_lines.append(words_text)
-            structure.append(block_lines)
-
-        structure_json = json.dumps(structure, ensure_ascii=False, indent=2)
-
-        # Default system prompt
-        if system_prompt is None:
-            system_prompt = """You are an advanced OCR text correction assistant.
-
-        Your task is to restore the original intended human-written text from noisy OCR output.
-
-        IMPORTANT: You MUST return a JSON array with EXACTLY the same structure as the input:
-        - Same number of blocks (outer arrays)
-        - Same number of lines in each block (middle arrays)
-        - Same number of words in each line (inner strings)
-        This is a strict 1-to-1 mapping. Do NOT add, remove, merge, or split any elements.
-
-        RULES:
-        1. Correct all OCR-related errors:
-        - misrecognized characters (e.g., "0"→"О", "Cl"→"Л", "rn"→"m")
-        - broken or merged words ("чувств а" → "чувства", "мир а" → "мира")
-        - repeated fragments or duplicated words caused by OCR
-        - missing or extra letters
-        - incorrect casing and random capitalization
-        - incorrect endings, cases, verb forms, grammatical errors caused by OCR noise
-        - hyphenated words split across lines due to line breaks (e.g., "приме-", "ром" → "приме-", "ром" BUT corrected for OCR errors)
-
-        2. Improve readability by restoring proper:
-        - spelling within each word (even if it's part of a hyphenated word)
-        - grammar
-        - word forms
-        - punctuation
-        - DO NOT merge words split by line breaks - keep them separate
-
-        3. Preserve:
-        - the EXACT structure: same number of blocks, lines, and words
-        - words split by hyphens across lines must stay split in separate array elements
-        - original line breaks
-        - the overall semantic meaning
-        - the style of the author (do NOT rewrite or paraphrase)
-
-        4. Do NOT:
-        - add new content
-        - change the meaning
-        - summarize or rewrite stylistically
-        - merge or split words (keep 1-to-1 mapping)
-        - remove or add words
-        - merge hyphenated words across line breaks
-        - wrap the array in an object - return the array directly
-
-        5. Your output must be ONLY a JSON array matching the input structure EXACTLY.
-        No explanations, no comments, no metadata, no wrapping object.
-
-        Example:
-        Input: [[[word1, word2], [word3]], [[word4]]]
-        Output: [[[corrected1, corrected2], [corrected3]], [[corrected4]]]
-
-        Each word in the input array corresponds to exactly one word in the output array.
-        Hyphenated words at line breaks stay as separate words but with corrected spelling."""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"Correct OCR errors in words, keeping the EXACT same structure:\n\n{structure_json}",
-            },
-        ]
-
-        # Call OpenAI API with response_format
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            response_format={"type": "json_object"},
-        )
-
-        corrected_text = response.choices[0].message.content.strip()
-
-        # Clean up markdown if present
-        if corrected_text.startswith("```json"):
-            corrected_text = corrected_text[7:]
-        if corrected_text.startswith("```"):
-            corrected_text = corrected_text[3:]
-        if corrected_text.endswith("```"):
-            corrected_text = corrected_text[:-3]
-        corrected_text = corrected_text.strip()
-
-        # Parse JSON - handle both direct array and wrapped object
-        parsed = json.loads(corrected_text)
-        if isinstance(parsed, dict):
-            # If model wrapped it in object, try to extract array from various possible keys
-            for key in ["corrected", "words", "result", "structure", "blocks", "data"]:
-                if key in parsed and isinstance(parsed[key], list):
-                    corrected_structure = parsed[key]
-                    break
-            else:
-                # If no known key found, raise error with helpful message
-                raise ValueError(
-                    f"LLM returned object with unexpected keys: {list(parsed.keys())}. "
-                    f"Expected array or object with 'corrected'/'words'/'result' key."
-                )
-        else:
-            corrected_structure = parsed
-
-        # Map corrected words back to page (1-to-1 mapping)
-        for block_idx, block in enumerate(page.blocks):
-            if block_idx >= len(corrected_structure):
-                break
-            corrected_block = corrected_structure[block_idx]
-            if not isinstance(corrected_block, list):
-                continue
-            for line_idx, line in enumerate(block.lines):
-                if line_idx >= len(corrected_block):
-                    break
-                corrected_words = corrected_block[line_idx]
-                if not isinstance(corrected_words, list):
-                    continue
-                for word_idx, word in enumerate(line.words):
-                    if word_idx < len(corrected_words):
-                        word.text = corrected_words[word_idx]
-
-        return page
+            return None 

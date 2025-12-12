@@ -13,7 +13,7 @@ except ImportError:
     torch = None
 
 
-def draw_quads(
+def _draw_quads(
     image: Union[str, Path, np.ndarray, Image.Image],
     quads: np.ndarray,
     color: Tuple[int, int, int] = (0, 255, 0),

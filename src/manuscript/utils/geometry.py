@@ -4,7 +4,7 @@ import numpy as np
 from shapely.geometry import Polygon
 
 
-def box_iou(
+def _box_iou(
     box1: Union[Tuple[float, float, float, float], np.ndarray],
     box2: Union[Tuple[float, float, float, float], np.ndarray]
 ) -> float:
@@ -31,25 +31,3 @@ def box_iou(
         return 0.0
     
     return inter_area / union_area
-
-# нужна ли функция
-def quad_iou(quad1: np.ndarray, quad2: np.ndarray) -> float:
-    """
-    Calculate IoU for two quadrilateral polygons using Shapely.
-    """
-    try:
-        poly1 = Polygon(quad1)
-        poly2 = Polygon(quad2)
-        
-        if not poly1.is_valid or not poly2.is_valid:
-            return 0.0
-        
-        intersection = poly1.intersection(poly2).area
-        union = poly1.union(poly2).area
-        
-        if union <= 0:
-            return 0.0
-        
-        return intersection / union
-    except Exception:
-        return 0.0

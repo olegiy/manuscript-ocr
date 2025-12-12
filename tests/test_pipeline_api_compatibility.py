@@ -413,35 +413,4 @@ def test_pipeline_partial_initialization():
     assert pipeline2.recognizer is custom_recognizer
 
 
-def test_pipeline_process_batch():
-    """Test process_batch method"""
-    detector = DummyDetector()
-    recognizer = DummyRecognizer()
-    pipeline = Pipeline(detector=detector, recognizer=recognizer)
 
-    # Create multiple test images
-    images = [np.zeros((100, 400, 3), dtype=np.uint8) for _ in range(3)]
-
-    results = pipeline.process_batch(images)
-
-    assert len(results) == 3
-    assert all(isinstance(r, dict) for r in results)
-    assert all("page" in r for r in results)
-
-
-def test_pipeline_process_batch_with_vis():
-    """Test process_batch with visualization"""
-    detector = DummyDetector()
-    recognizer = DummyRecognizer()
-    pipeline = Pipeline(detector=detector, recognizer=recognizer)
-
-    images = [np.zeros((100, 400, 3), dtype=np.uint8) for _ in range(2)]
-
-    results = pipeline.process_batch(images, vis=True)
-
-    assert len(results) == 2
-    for result in results:
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        assert isinstance(result[0], dict)
-        assert isinstance(result[1], Image.Image)

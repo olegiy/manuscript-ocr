@@ -6,91 +6,101 @@ Pipeline в `manuscript-ocr` спроектирован для работы с *
 
 ## Требования к Детектору
 
-Класс детектора должен реализовать метод `predict`:
+Класс детектора должен реализовать метод `predict`, который принимает изображение и возвращает словарь с ключом `"page"`:
 
 ```python
-def predict(
-    self, 
-    image: Union[str, np.ndarray, Image.Image],
-    vis: bool = False,
-    profile: bool = False
-) -> Union[Dict[str, Any], Tuple[Page, ...], Page]:
+def predict(self, image) -> Dict[str, Any]:
     """
     Параметры:
-    - image: путь к файлу, numpy массив или PIL Image
-    - vis: флаг визуализации (опционально)
-    - profile: флаг профилирования (опционально)
+    - image: путь к файлу (str) или numpy массив (H, W, 3) в uint8
     
-    Возвращает один из форматов:
-    1. dict с ключом "page": {"page": Page, ...}
-    2. tuple где первый элемент Page: (Page, ...)
-    3. напрямую объект Page
+    Возвращает словарь:
+    {
+        "page": Page  # объект Page с результатами детекции
+    }
     """
     pass
 ```
 
 ### Структура результата
 
-`Page` должна иметь:
-- `blocks`: список объектов `Block`
+Результат должен содержать объект `Page` с иерархией:  
+**Page** → **Block** → **Line** → **Word**
 
-`Block` должен иметь:
-- `words`: список объектов `Word`
+```mermaid
+graph LR
 
-`Word` должен иметь:
-- `polygon`: список из 4 точек `[[x1,y1], [x2,y2], [x3,y3], [x4,y4]]`
-- `detection_confidence`: float (уверенность детекции)
+    %% Entities
+    Page[Page]
+    Block[Block]
+    Line[Line]
+    Word[Word]
+
+    %% Relations
+    Page -->|"blocks: List[Block]"| Block
+    Block -->|"lines: List[Line]"| Line
+    Line -->|"words: List[Word]"| Word
+
+    %% Word fields
+    Word --> Wpoly["polygon: List[(x, y)]<br>≥ 4 points, clockwise"]
+    Word --> Wdet["detection_confidence: float (0–1)"]
+    Word --> Wtext["text: Optional[str]"]
+    Word --> Wrec["recognition_confidence: Optional[float] (0–1)"]
+    Word --> WordOrder["order: Optional[int]<br>assigned after sorting"]
+
+    %% Line fields
+    Line --> LineOrder["order: Optional[int]<br>assigned after sorting"]
+
+    %% Block fields
+    Block --> BlockOrder["order: Optional[int]<br>assigned after sorting"]
+```
+
+Подробное описание структур данных смотрите в `src/manuscript/data/structures.py`.
+
+**Минимальный пример создания Page:**
+
+```python
+from manuscript.data import Word, Line, Block, Page
+
+# Создаем слово с координатами и уверенностью детекции
+word = Word(
+    polygon=[(10, 20), (100, 20), (100, 40), (10, 40)],
+    detection_confidence=0.95
+)
+
+# Группируем слова в строку
+line = Line(words=[word])
+
+# Группируем строки в блок
+block = Block(lines=[line])
+
+# Создаем страницу
+page = Page(blocks=[block])
+```
 
 ---
 
 ## Требования к Распознавателю
 
-Класс распознавателя должен реализовать метод `predict`:
+Класс распознавателя должен реализовать метод `predict`, который принимает список изображений и возвращает список результатов:
 
 ```python
-def predict(
-    self, 
-    images: List[np.ndarray]
-) -> List[Dict[str, Any]]:
+def predict(self, images: List[np.ndarray]) -> List[Dict[str, Any]]:
     """
     Параметры:
     - images: список numpy массивов (RGB изображения слов)
     
-    Возвращает список словарей, где каждый элемент:
-    {
-        "text": str,        # распознанный текст
-        "confidence": float # уверенность распознавания [0, 1]
-    }
+    Возвращает список словарей:
+    [
+        {"text": "слово1", "confidence": 0.95},
+        {"text": "слово2", "confidence": 0.92},
+        ...
+    ]
     """
     pass
 ```
 
-**Важно:** Формат возврата - список словарей для согласованности с API детектора.
-
----
-
-## Примеры совместимых реализаций
-
-### Минимальный детектор
-
-```python
-from manuscript.data import Word, Block, Page
-
-class MyDetector:
-    def predict(self, image, vis=False, profile=False):
-        # Ваша логика детекции
-        words = [
-            Word(
-                polygon=[[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
-                detection_confidence=0.95
-            ),
-            # ... другие слова
-        ]
-        page = Page(blocks=[Block(words=words)])
-        return {"page": page}
-```
-
-### Минимальный распознаватель
+**Пример:**
 
 ```python
 class MyRecognizer:
@@ -98,7 +108,54 @@ class MyRecognizer:
         results = []
         for img in images:
             # Ваша логика распознавания
-            text = "распознанный текст"
+            text = "распознанный_текст"
+            confidence = 0.92
+            results.append({"text": text, "confidence": confidence})
+        return results
+```
+
+---
+
+## Примеры совместимых реализаций
+
+### Полный пример детектора
+
+```python
+from manuscript.data import Word, Line, Block, Page
+
+class MyDetector:
+    def predict(self, image):
+        # Ваша логика детекции изображения
+        # ...
+        
+        # Создаем результат
+        words = [
+            Word(
+                polygon=[(10, 20), (100, 20), (100, 40), (10, 40)],
+                detection_confidence=0.95
+            ),
+            Word(
+                polygon=[(110, 20), (200, 20), (200, 40), (110, 40)],
+                detection_confidence=0.92
+            ),
+        ]
+        
+        line = Line(words=words)
+        block = Block(lines=[line])
+        page = Page(blocks=[block])
+        
+        return {"page": page}
+```
+
+### Полный пример распознавателя
+
+```python
+class MyRecognizer:
+    def predict(self, images):
+        results = []
+        for img in images:
+            # Ваша логика распознавания
+            text = "распознанный_текст"
             confidence = 0.92
             results.append({"text": text, "confidence": confidence})
         return results
@@ -109,96 +166,134 @@ class MyRecognizer:
 ```python
 from manuscript import Pipeline
 
+# С моделями по умолчанию (EAST + TRBA)
+pipeline = Pipeline()
+result = pipeline.predict("image.jpg")
+text = pipeline.get_text(result["page"])
+
 # С пользовательскими компонентами
 detector = MyDetector()
 recognizer = MyRecognizer()
 pipeline = Pipeline(detector, recognizer)
-
-# Или с моделями по умолчанию
-pipeline = Pipeline()
-
 result = pipeline.predict("image.jpg")
-text = pipeline.get_text(result)
+```
 ```
 
 ---
 
-## Тестирование совместимости
+## Использование Pipeline
 
-Файл `tests/test_pipeline_api_compatibility.py` содержит:
-
-- `DummyDetector` - минимальная реализация детектора
-- `DummyRecognizer` - минимальная реализация распознавателя
-- Тесты проверяющие все варианты возвращаемых форматов
-
-Вы можете использовать эти классы как reference implementation или для unit-тестов своих компонентов.
-
----
-
-## Замена компонентов
-
-Pipeline позволяет легко заменять детектор или распознаватель, или использовать модели по умолчанию:
+### Базовое использование
 
 ```python
 from manuscript import Pipeline
 
-# Модели по умолчанию (автоматическая инициализация)
+# Инициализация с моделями по умолчанию
 pipeline = Pipeline()
 
-# Только детектор кастомный, распознаватель по умолчанию
+# Распознавание изображения
+result = pipeline.predict("document.jpg")
+page = result["page"]
+
+# Извлечение текста
+text = pipeline.get_text(page)
+print(text)
+```
+
+### Только детекция (без распознавания)
+
+```python
+result = pipeline.predict("document.jpg", recognize_text=False)
+page = result["page"]
+
+# Слова имеют polygon и detection_confidence, но без text
+for block in page.blocks:
+    for line in block.lines:
+        for word in line.words:
+            print(f"Polygon: {word.polygon}, Confidence: {word.detection_confidence}")
+```
+
+### С визуализацией
+
+```python
+result, vis_img = pipeline.predict("document.jpg", vis=True)
+vis_img.save("output_visualization.jpg")
+```
+
+### С профилированием
+
+```python
+# Выводит время выполнения каждого этапа
+result = pipeline.predict("document.jpg", profile=True)
+# Вывод:
+# Detection: 0.123s
+# Load image for crops: 0.005s
+# Extract 45 crops: 0.012s
+# Recognition: 0.234s
+# Pipeline total: 0.374s
+```
+
+### Пакетная обработка
+
+```python
+images = ["page1.jpg", "page2.jpg", "page3.jpg"]
+results = pipeline.process_batch(images)
+
+for result in results:
+    text = pipeline.get_text(result["page"])
+    print(text)
+```
+
+---
+
+## Настройка компонентов
+
+### Замена детектора или распознавателя
+
+```python
+from manuscript import Pipeline
+
+# Только кастомный детектор, распознаватель по умолчанию
 from my_package import MyCustomDetector
 pipeline = Pipeline(detector=MyCustomDetector())
 
-# Только распознаватель кастомный, детектор по умолчанию
+# Только кастомный распознаватель, детектор по умолчанию  
 from my_package import MyCustomRecognizer
 pipeline = Pipeline(recognizer=MyCustomRecognizer())
 
 # Оба компонента кастомные
-pipeline = Pipeline(
-    detector=MyCustomDetector(),
-    recognizer=MyCustomRecognizer()
-)
+pipeline = Pipeline(detector=MyCustomDetector(), recognizer=MyCustomRecognizer())
 ```
 
-Или с использованием встроенных моделей с параметрами:
+### Настройка встроенных моделей
 
 ```python
 from manuscript import Pipeline
 from manuscript.detectors import EAST
 from manuscript.recognizers import TRBA
 
-# EAST с повышенным порогом уверенности
-detector = EAST(score_thresh=0.8)
-# TRBA с GPU
-recognizer = TRBA(device="cuda")
+# EAST с настройками
+detector = EAST(
+    weights="east_50_g1",        # выбор весов
+    score_thresh=0.8,            # порог уверенности
+    nms_thresh=0.2,              # порог NMS
+    device="cpu"                 # устройство (cpu/cuda)
+)
+
+# TRBA с настройками
+recognizer = TRBA(
+    weights="trba_lite_g1",      # выбор весов
+    device="cuda"                # GPU для ускорения
+)
 
 pipeline = Pipeline(detector, recognizer)
 ```
 
----
-
-## Дополнительные параметры
-
-Pipeline поддерживает дополнительные параметры:
+### Фильтрация по размеру
 
 ```python
-from manuscript import Pipeline
-
-# С параметрами по умолчанию
-pipeline = Pipeline()
-
-# С минимальным размером текста
+# Игнорировать текстовые блоки меньше 10 пикселей
 pipeline = Pipeline(min_text_size=10)
-
-# С кастомными моделями и параметрами
-from manuscript.detectors import EAST
-from manuscript.recognizers import TRBA
-
-pipeline = Pipeline(
-    detector=EAST(score_thresh=0.7),
-    recognizer=TRBA(device="cuda"),
-    min_text_size=5  # Минимальный размер бокса (в пикселях)
-)
 ```
 
-Боксы меньше `min_text_size` будут отфильтрованы и не будут отправлены на распознавание.
+---

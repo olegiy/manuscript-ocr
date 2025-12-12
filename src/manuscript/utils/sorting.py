@@ -5,7 +5,7 @@ import numpy as np
 from ..data import Block, Line, Page, Word
 
 
-def resolve_intersections(
+def _resolve_intersections(
     boxes: List[Tuple[float, float, float, float]],
 ) -> List[Tuple[float, float, float, float]]:
     """
@@ -24,7 +24,7 @@ def resolve_intersections(
     Examples
     --------
     >>> boxes = [(10, 10, 55, 30), (50, 10, 100, 30)]  # Overlapping
-    >>> resolved = resolve_intersections(boxes)
+    >>> resolved = _resolve_intersections(boxes)
     >>> len(resolved)
     2
 
@@ -112,7 +112,7 @@ def _emptiness(boxes, start, end) -> float:
     return (rect - area) / rect if rect else 1.0
 
 
-def segment_columns(
+def _segment_columns(
     boxes: List[Tuple[int, int, int, int]],
     max_splits: int = 10,
 ) -> List[List[Tuple[int, int, int, int]]]:
@@ -188,7 +188,7 @@ def segment_columns(
     return sorted(cols, key=lambda c: min(b[0] for b in c))
 
 
-def sort_into_lines(
+def _sort_into_lines(
     boxes: List[Tuple[float, float, float, float]],
     y_tol_ratio: float = 0.6,
     x_gap_ratio: float = np.inf,
@@ -247,11 +247,11 @@ def sort_into_lines(
     if not boxes:
         return []
 
-    compressed = resolve_intersections(boxes)
+    compressed = _resolve_intersections(boxes)
     mapping = {c: o for c, o in zip(compressed, boxes)}
 
     if use_columns:
-        columns = segment_columns(compressed, max_splits=max_columns)
+        columns = _segment_columns(compressed, max_splits=max_columns)
         all_lines = []
         for column_boxes in columns:
             column_lines = _sort_column_into_lines(
@@ -387,7 +387,7 @@ def organize_page(
 
     # Segment into columns if requested
     if use_columns:
-        columns = segment_columns(boxes, max_splits=max_splits)
+        columns = _segment_columns(boxes, max_splits=max_splits)
     else:
         columns = [boxes]
 
@@ -395,7 +395,7 @@ def organize_page(
     blocks: List[Block] = []
     for block_idx, column_boxes in enumerate(columns):
         # Sort this column into lines
-        lines_in_column = sort_into_lines(column_boxes, use_columns=False)
+        lines_in_column = _sort_into_lines(column_boxes, use_columns=False)
 
         # Convert to Line objects with ordered Words
         lines: List[Line] = []
