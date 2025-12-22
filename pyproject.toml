@@ -84,8 +84,15 @@ dev = [
     "flake8>=5",
     "isort>=5.10",
     "mypy>=0.991",
+    
+    # Documentation tools
     "sphinx>=5",
     "sphinx-rtd-theme>=1",
+    "numpydoc>=1.5",
+    "sphinx-autodoc-typehints>=1.24",
+    "sphinxcontrib-mermaid>=0.9",
+    
+    # Build and publish tools
     "build>=0.8",
     "twine>=4",
 ]
