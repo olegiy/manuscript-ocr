@@ -34,13 +34,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install sphinx sphinx-rtd-theme numpydoc sphinx-autodoc-typehints sphinxcontrib-mermaid
+          pip install sphinx sphinx-rtd-theme numpydoc sphinx-autodoc-typehints sphinxcontrib-mermaid sphinx-intl
           pip install -e .
 
       - name: Build documentation
         run: |
           cd docs/sphinx
-          sphinx-build -b html . _build/html
+          # Update translation templates
+          sphinx-build -b gettext . _build/gettext
+          sphinx-intl update -p _build/gettext -l ru
+          # Build English documentation
+          sphinx-build -b html . _build/html/en
+          # Build Russian documentation
+          sphinx-build -b html -D language=ru . _build/html/ru
+          # Create redirect at root
+          echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=en/index.html"><title>Redirecting...</title></head><body><p>Redirecting to <a href="en/index.html">English documentation</a>...</p></body></html>' > _build/html/index.html
           touch _build/html/.nojekyll
 
       - name: Upload artifact

@@ -1,0 +1,122 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, Konstantin Kozhin
+# This file is distributed under the same license as the manuscript-ocr package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: manuscript-ocr \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-22 17:48+0700\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: ../../getting_started.rst:2
+#: fa8322693daf4619ac92dee1370a7f76
+msgid "Getting Started"
+msgstr ""
+
+#: ../../getting_started.rst:5
+#: e0dc611f40e641a8b14a9ffbd5ee9a5b
+msgid "Installation"
+msgstr ""
+
+#: ../../getting_started.rst:7
+#: 267db7362ae44104a7a8a84102b0cdb9
+msgid "**Basic installation** (inference only):"
+msgstr ""
+
+#: ../../getting_started.rst:13
+#: fdf51bfcd99f4d2a8ffe4db28b5515d3
+msgid "**Installation with training support** (includes PyTorch):"
+msgstr ""
+
+#: ../../getting_started.rst:19
+#: d1f8c0faf283419eaa839977b160f7ff
+msgid "This installs additional dependencies for model training:"
+msgstr ""
+
+#: ../../getting_started.rst:21
+#: 64624f1c093a45989e72c3c28e342b63
+msgid "PyTorch and TorchVision"
+msgstr ""
+
+#: ../../getting_started.rst:22
+#: 0be8d61a3c6f41bfb129940468035968
+msgid "ONNX export tools"
+msgstr ""
+
+#: ../../getting_started.rst:23
+#: f23a48a486414e92b05ffa94c15140d0
+msgid "Training utilities (albumentations, tensorboard, etc.)"
+msgstr ""
+
+#: ../../getting_started.rst:24
+#: 69829b68833c4b30b590affde2f8a62d
+msgid "Development tools (pytest, black, flake8, etc.)"
+msgstr ""
+
+#: ../../getting_started.rst:26
+#: 4612809a7acb435586efe8c35f290a28
+msgid "**GPU acceleration** (NVIDIA CUDA):"
+msgstr ""
+
+#: ../../getting_started.rst:33
+#: 54a97c9e75c24d3382e7ecd041ef304d
+msgid "**Apple Silicon acceleration** (CoreML):"
+msgstr ""
+
+#: ../../getting_started.rst:41
+#: 8cb14b395a85466693bc5fa95641cb70
+msgid "Quick Start"
+msgstr ""
+
+#: ../../getting_started.rst:43
+#: 2810631c4845474083130e0e53f92b2c
+msgid "Basic usage example:"
+msgstr ""
+
+#: ../../getting_started.rst:60
+#: f8fc97537008450ab9d735910af658ee
+msgid "Main Components"
+msgstr ""
+
+#: ../../getting_started.rst:62
+#: 185c313f3fb042fb8c7eb8a65289e195
+msgid ":class:`~manuscript.Pipeline` - High-level OCR pipeline"
+msgstr ""
+
+#: ../../getting_started.rst:63
+#: 79106386720e49fb8619baab55c431e2
+msgid ":class:`~manuscript.detectors.EAST` - Text detector"
+msgstr ""
+
+#: ../../getting_started.rst:64
+#: a5ad7e27c5b84a8e9f39094048bd5995
+msgid ":class:`~manuscript.recognizers.TRBA` - Text recognizer"
+msgstr ""
+
+#: ../../getting_started.rst:65
+#: 688bc42cca7a4cb38017bb8e0cd95255
+msgid ":class:`~manuscript.data.Page` - Page data structure"
+msgstr ""
+
+#: ../../getting_started.rst:66
+#: 945d39529bc34e0bbb17b4647ca8d5a1
+msgid ":class:`~manuscript.data.Block` - Block data structure"
+msgstr ""
+
+#: ../../getting_started.rst:67
+#: 399815d594a94415956270810e4fa1ce
+msgid ":class:`~manuscript.data.Line` - Line data structure"
+msgstr ""
+
+#: ../../getting_started.rst:68
+#: 483fab9d2a6343bbb9ece0ad3a7ea5bf
+msgid ":class:`~manuscript.data.Word` - Word data structure"
+msgstr ""

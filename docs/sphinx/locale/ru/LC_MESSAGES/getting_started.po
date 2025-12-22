@@ -1,0 +1,83 @@
+#: ../../getting_started.rst:2 fa8322693daf4619ac92dee1370a7f76
+msgid "Getting Started"
+msgstr "Начало работы"
+
+#: ../../getting_started.rst:5 e0dc611f40e641a8b14a9ffbd5ee9a5b
+msgid "Installation"
+msgstr "Установка"
+
+#: ../../getting_started.rst:7 267db7362ae44104a7a8a84102b0cdb9
+msgid "**Basic installation** (inference only):"
+msgstr "**Базовая установка** (только инференс):"
+
+#: ../../getting_started.rst:13 fdf51bfcd99f4d2a8ffe4db28b5515d3
+msgid "**Installation with training support** (includes PyTorch):"
+msgstr "**Установка с поддержкой обучения** (включает PyTorch):"
+
+#: ../../getting_started.rst:19 d1f8c0faf283419eaa839977b160f7ff
+msgid "This installs additional dependencies for model training:"
+msgstr "Будут установлены дополнительные зависимости для обучения моделей:"
+
+#: ../../getting_started.rst:21 64624f1c093a45989e72c3c28e342b63
+msgid "PyTorch and TorchVision"
+msgstr "PyTorch и TorchVision"
+
+#: ../../getting_started.rst:22 0be8d61a3c6f41bfb129940468035968
+msgid "ONNX export tools"
+msgstr "Инструменты экспорта ONNX"
+
+#: ../../getting_started.rst:23 f23a48a486414e92b05ffa94c15140d0
+msgid "Training utilities (albumentations, tensorboard, etc.)"
+msgstr "Утилиты для обучения (albumentations, TensorBoard и др.)"
+
+#: ../../getting_started.rst:24 69829b68833c4b30b590affde2f8a62d
+msgid "Development tools (pytest, black, flake8, etc.)"
+msgstr "Инструменты разработки (pytest, black, flake8 и др.)"
+
+#: ../../getting_started.rst:26 4612809a7acb435586efe8c35f290a28
+msgid "**GPU acceleration** (NVIDIA CUDA):"
+msgstr "**Аппаратное ускорение GPU** (NVIDIA CUDA):"
+
+#: ../../getting_started.rst:33 54a97c9e75c24d3382e7ecd041ef304d
+msgid "**Apple Silicon acceleration** (CoreML):"
+msgstr "**Ускорение на Apple Silicon** (CoreML):"
+
+#: ../../getting_started.rst:41 8cb14b395a85466693bc5fa95641cb70
+msgid "Quick Start"
+msgstr "Быстрый старт"
+
+#: ../../getting_started.rst:43 2810631c4845474083130e0e53f92b2c
+msgid "Basic usage example:"
+msgstr "Пример базового использования:"
+
+#: ../../getting_started.rst:60 f8fc97537008450ab9d735910af658ee
+msgid "Main Components"
+msgstr "Основные компоненты"
+
+#: ../../getting_started.rst:62 185c313f3fb042fb8c7eb8a65289e195
+msgid ":class:`~manuscript.Pipeline` - High-level OCR pipeline"
+msgstr ":class:`~manuscript.Pipeline` — высокоуровневый OCR-конвейер"
+
+#: ../../getting_started.rst:63 79106386720e49fb8619baab55c431e2
+msgid ":class:`~manuscript.detectors.EAST` - Text detector"
+msgstr ":class:`~manuscript.detectors.EAST` — детектор текста"
+
+#: ../../getting_started.rst:64 a5ad7e27c5b84a8e9f39094048bd5995
+msgid ":class:`~manuscript.recognizers.TRBA` - Text recognizer"
+msgstr ":class:`~manuscript.recognizers.TRBA` — модель распознавания текста"
+
+#: ../../getting_started.rst:65 688bc42cca7a4cb38017bb8e0cd95255
+msgid ":class:`~manuscript.data.Page` - Page data structure"
+msgstr ":class:`~manuscript.data.Page` — структура данных страницы"
+
+#: ../../getting_started.rst:66 945d39529bc34e0bbb17b4647ca8d5a1
+msgid ":class:`~manuscript.data.Block` - Block data structure"
+msgstr ":class:`~manuscript.data.Block` — структура данных блока"
+
+#: ../../getting_started.rst:67 399815d594a94415956270810e4fa1ce
+msgid ":class:`~manuscript.data.Line` - Line data structure"
+msgstr ":class:`~manuscript.data.Line` — структура данных строки"
+
+#: ../../getting_started.rst:68 483fab9d2a6343bbb9ece0ad3a7ea5bf
+msgid ":class:`~manuscript.data.Word` - Word data structure"
+msgstr ":class:`~manuscript.data.Word` — структура данных слова"

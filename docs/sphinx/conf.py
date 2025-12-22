@@ -33,6 +33,8 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
+html_css_files = ['language_switcher.css']
+html_js_files = ['language_switcher.js']
 
 # -- Extension configuration -------------------------------------------------
 
@@ -89,3 +91,8 @@ source_suffix = '.rst'
 
 # Master doc
 master_doc = 'index'
+
+# -- Internationalization (i18n) ---------------------------------------------
+locale_dirs = ['locale/']
+gettext_compact = False
+gettext_uuid = True

@@ -1,0 +1,234 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, Konstantin Kozhin
+# This file is distributed under the same license as the manuscript-ocr package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: manuscript-ocr \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-22 17:48+0700\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: ../../api/utils.rst:2
+#: e60be4a167104ebbbfb12ab898e97d14
+msgid "Utilities"
+msgstr ""
+
+#: ../../api/utils.rst:4
+#: df7a37714c9d490384bdebd05d77bc62
+msgid "Utility functions for image processing, visualization, and more."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils:1
+#: f2eb893694c549f784e24a35a42146d3
+msgid "Common utilities for manuscript-ocr."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:2
+#: f67a00a511514ec8aa892d21015d56ee
+msgid "Universal image reading with support for multiple input types."
+msgstr ""
+
+#: ../../api/utils.rst:0
+#: 5f78ed61106d4ab68fc3c3fbde6fc802
+#: 02738832d8d74453af11f450d94587c2
+#: 4598cb7fb6ef4118a6aaee85f85f5601
+#: 3c3da40dacf541af864c9db86ced83c3
+msgid "Parameters"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:5
+#: 8e04f2b5ccd34ee68ac70a3fd55677c6
+msgid "Image source in one of the following formats: - File path (str or Path) - supports Unicode paths (e.g., Cyrillic) - Bytes buffer (e.g., from HTTP response) - NumPy array (already loaded image) - PIL Image object"
+msgstr ""
+
+#: ../../api/utils.rst:0
+#: 00add7a2eb6f4f30ac03742b5a750e0a
+#: 50f91e92c6974454b404c947ef1d11a5
+#: 9432393127f64df8b503e360f59d98cd
+msgid "Returns"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:12
+#: 56b05ef512c04a78a513e18bfa327828
+msgid "RGB image as numpy array with shape (H, W, 3) and dtype uint8."
+msgstr ""
+
+#: ../../api/utils.rst:0
+#: 6f078fabf10749dbb3253ea19c1810c0
+#: 3e97cd731c8148df951397fd6390cadb
+#: 6a436f07ddf04a60a494e2fb3f004d28
+#: eef0b278d4184191bebe3c229f77f361
+msgid "Return type"
+msgstr ""
+
+#: ../../api/utils.rst:0
+#: b38fa08034c54fd5b4494a979d3e7860
+msgid "Raises"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:15
+#: 705d32bd5781494d9cc9b4ba7976a536
+msgid "If the image file cannot be read with either OpenCV or PIL."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:16
+#: 021f19c472024e919798f89c9010dbbf
+msgid "If the input type is not supported."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:17
+#: b57c1431cbb04a5f8d9bf9db92da8f63
+msgid "If bytes cannot be decoded into an image."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.io.read_image:20
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:29
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:53
+#: 4d7bb0944acb4481b1c3566889a6d255
+#: cf99ecf26ab34d53ad6b2d79dd14dedf
+#: e22e0c22da574143b1c7542c64852694
+msgid "Examples"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:2
+#: bf6eed843d2e4eea9e05a3062d0301c5
+msgid "Visualize a Page object with detected words/blocks."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:4
+#: e6b0d678ef534c84958751033686a862
+msgid "This function draws all words from the Page structure on the image, optionally showing reading order with numbered markers and connecting lines. When show_order=True, it also visualizes blocks with semi-transparent bounding boxes, each block having a distinct color."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:10
+#: 153c024f2ebc459eb158f56796ecfa3d
+msgid "Input image. Can be: - Path to image file (str or Path) - supports Unicode paths - RGB numpy array with shape (H, W, 3) - PIL Image object"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:16
+#: 101f238a7e354f0584c4a95fb4b7d698
+msgid "Page object from manuscript.data containing detected blocks/words."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:19
+#: a2ed16989ba5411e87c47016f6b22082
+msgid "RGB color for word boundaries."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:22
+#: 91451a391e8e495da3ea0d0319456a04
+msgid "Line thickness for word boundaries."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:24
+#: 52c879403af54597a12c3aa7bba401a1
+msgid "Alpha for darkening background (0=no darkening, 1=fully dark)."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:26
+#: 0cfde423d4cb4f7cbaefb2087e0f64b8
+msgid "Gaussian blur kernel size (0=no blur, must be odd)."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:29
+#: bd83a2bd44f0461c8d3c4d020f8aa15f
+msgid "If True, display reading order with numbers and connecting lines. Also colors different text lines with different colors and shows semi-transparent block boundaries with different colors per block."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:34
+#: 8ef51d4c748c4803b0af7c67f55caee6
+msgid "RGB color for connecting lines between words."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:37
+#: 3cca0959ea0e46e6ae1d7320daba7669
+msgid "Background color for order number boxes."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:40
+#: b28687e0555f4456981210d30e4f0e72
+msgid "Text color for order numbers."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:43
+#: 179c6f023d094554a0f4c59820431676
+msgid "Maximum size for the longer dimension of the output image. Image will be resized proportionally if larger. Set to None to keep original size."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:48
+#: d316af35eb6143ab883321b70df4e6b5
+msgid "Visualized image with detection boxes and optional reading order annotations. When show_order=True, also includes semi-transparent block boundaries."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:54
+#: 9eee4d60b73249f78ef89ebd60b28d0a
+msgid "Basic visualization without reading order:"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.visualization.visualize_page:64
+#: 25639e67d4164102b3dc1c61c665686f
+msgid "Visualization with reading order and block boundaries:"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:2
+#: 6323b9b2217a4fd9907fd950f6873690
+msgid "Organize words in a Page into structured Blocks, Lines, and reading order."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:4
+#: 86a1dc27a4064a83ab87c69aafa4dc42
+msgid "Takes a Page with unorganized words and returns a new Page where: - Words are grouped into columns (Blocks) - Each Block contains Lines of Words - Words within Lines are ordered left-to-right - Lines within Blocks are ordered top-to-bottom - Blocks are ordered left-to-right (for columns)"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:12
+#: 11306559a0534bc282ea0deb25cdc077
+msgid "Input Page object. Can contain either: - Words in unstructured blocks/lines - Direct list of words without proper organization"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:17
+#: 57bd2e763a85491e87f33a70a85af8ef
+msgid "Maximum number of column splits to attempt when segmenting. Higher values allow more columns to be detected. Default is 10."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:21
+#: 0c2945803d4e48f2bdb09c2791e235b8
+msgid "If True, segments the page into columns (separate Blocks). If False, treats entire page as single column. Default is True."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:25
+#: 5abd76d4a961424fb03ca7fd3a792321
+msgid "New Page object with organized Blocks, Lines, and reading order set."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:45
+#: 70194d16e5c24718bddaaf51de9039fb
+msgid "Notes"
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:46
+#: b81326a53ad846c6b96aa373fa5c8150
+msgid "This function extracts all words from the input Page (regardless of their current organization), converts them to bounding boxes, performs column segmentation and line sorting, then rebuilds a clean Page structure."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.sorting.organize_page:50
+#: 40234cb52b954e11be89788713aa2ac5
+msgid "The function preserves all Word attributes (polygon, confidence, text, etc.) while updating the `order` field for reading sequence."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.training.set_seed:2
+#: 7b9463585fdc4f05bc31112c113a2728
+msgid "Set random seed for reproducibility across random, numpy, and PyTorch."
+msgstr ""
+
+#: ../../../../src/manuscript/utils/__init__.py:docstring of manuscript.utils.training.set_seed:19
+#: bf104521e4fa4ca491362330d01761cf
+msgid ":sphinx_autodoc_typehints_type:`\\:py\\:obj\\:\\`None\\``"
+msgstr ""

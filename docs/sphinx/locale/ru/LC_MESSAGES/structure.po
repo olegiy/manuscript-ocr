@@ -1,0 +1,83 @@
+#: ../../structure.rst:2 7132229d5d1c4f399c5cda9b6cb0fe4b
+msgid "Library Structure"
+msgstr "Структура библиотеки"
+
+#: ../../structure.rst:4 34f7089a909a4f109497ad81b54c9c7b
+msgid "Overview of the manuscript-ocr library architecture."
+msgstr "Обзор архитектуры библиотеки manuscript-ocr."
+
+#: ../../structure.rst:86 d3dcd4e78f71439fa72e90491185f12c
+msgid "Module Descriptions"
+msgstr "Описание модулей"
+
+#: ../../structure.rst:88 64db78db5ee74cbeb3407f627809f6aa
+msgid "**Pipeline**"
+msgstr "**Pipeline**"
+
+#: ../../structure.rst:89 8f63bde9c3d84d1eaaa72a383acc56a7
+msgid ""
+"The main high-level interface that combines detection and recognition "
+"into a single OCR workflow."
+msgstr ""
+"Основной высокоуровневый интерфейс, объединяющий детекцию и распознавание "
+"в единый OCR-конвейер."
+
+#: ../../structure.rst:92 21ce1ce0459b4cf9ae0c165532e10059
+msgid "**data**"
+msgstr "**data**"
+
+#: ../../structure.rst:93 ff876a3edf144ba88d3edb2be586b9be
+msgid ""
+"Data structures (``Page``, ``Block``, ``Line``, ``Word``) for "
+"representing OCR results in a hierarchical format."
+msgstr ""
+"Структуры данных (``Page``, ``Block``, ``Line``, ``Word``) для представления "
+"результатов OCR в иерархическом формате."
+
+#: ../../structure.rst:96 33164a95e0e046e8ba7dbfd35e3d7356
+msgid "**detectors**"
+msgstr "**detectors**"
+
+#: ../../structure.rst:97 24f1ffdeb2a0461489c77cbf29c31d48
+msgid ""
+"Text detection models. Currently includes ``EAST`` (Efficient and "
+"Accurate Scene Text Detector)."
+msgstr ""
+"Модели детекции текста. В настоящее время включает ``EAST`` "
+"(Efficient and Accurate Scene Text Detector)."
+
+#: ../../structure.rst:100 0bb613ceb11d4750808539bfa2d135dc
+msgid "**recognizers**"
+msgstr "**recognizers**"
+
+#: ../../structure.rst:101 5dca33c078ad478a9568c264ed5e80e5
+msgid ""
+"Text recognition models. Currently includes ``TRBA`` (Text Recognition "
+"with BiLSTM and Attention mechanism)."
+msgstr ""
+"Модели распознавания текста. В настоящее время включает ``TRBA`` "
+"(TPS-ResNet-BiLSTM-Attention)."
+
+#: ../../structure.rst:104 752961c7b3bd4cda9d78c2482fadc59b
+msgid "**utils**"
+msgstr "**utils**"
+
+#: ../../structure.rst:105 fe5f058732f041f7b085551a041028e6
+msgid "Utility functions for:"
+msgstr "Вспомогательные функции для:"
+
+#: ../../structure.rst:107 1ae11129ba6d4103b7e0a285e2062663
+msgid "I/O operations (``read_image``)"
+msgstr "операций ввода-вывода (``read_image``)"
+
+#: ../../structure.rst:108 ce3411ddae6548f9aad1e87034dbaccb
+msgid "Visualization (``visualize_page``)"
+msgstr "визуализации (``visualize_page``)"
+
+#: ../../structure.rst:109 4a915e65ea9e4c0eb8ce4fb96668b6a6
+msgid "Sorting and organization (``organize_page``)"
+msgstr "сортировки и организации данных (``organize_page``)"
+
+#: ../../structure.rst:110 823a2a8812464508b0ebefcc3393f40c
+msgid "Training utilities (``set_seed``)"
+msgstr "утилит для обучения (``set_seed``)"
