@@ -43,9 +43,6 @@ dependencies = [
     "pydantic>=2.0",
     "tqdm>=4.60",
     "gdown>=4.4",
-    
-    # LLM integration
-    "openai>=0.27,<1.0",  # Old API compatible with llama.cpp
 ]
 
 [project.optional-dependencies]
