@@ -372,11 +372,9 @@ def visualize_predictions_tensorboard(
         return
 
     # Настройка декодирования
-    # mode теперь должен быть "ctc" или "attention"
     forward_kwargs = {
         "is_train": False,
         "batch_max_length": max_len,
-        "mode": mode,  # "ctc" or "attention"
     }
 
     # Обрабатываем примеры
