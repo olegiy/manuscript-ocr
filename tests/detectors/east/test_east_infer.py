@@ -534,4 +534,190 @@ class TestEASTIntegration:
         assert words1 == words2
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
+class TestEASTTTA:
+    """Tests for Test-Time Augmentation (TTA) functionality."""
+
+    def test_tta_default_disabled(self):
+        """Test that TTA is disabled by default."""
+        detector = EAST()
+        assert detector.use_tta is False
+        assert detector.tta_iou_thresh == 0.1
+
+    def test_tta_enabled_initialization(self):
+        """Test EAST initialization with TTA enabled."""
+        detector = EAST(use_tta=True, tta_iou_thresh=0.15)
+        assert detector.use_tta is True
+        assert detector.tta_iou_thresh == 0.15
+
+    def test_box_iou_calculation(self):
+        """Test IoU calculation between two boxes."""
+        detector = EAST()
+        
+        # Identical boxes - IoU should be 1.0
+        box1 = (0, 0, 100, 100)
+        iou = detector._box_iou(box1, box1)
+        assert abs(iou - 1.0) < 1e-6
+        
+        # Non-overlapping boxes - IoU should be 0.0
+        box1 = (0, 0, 50, 50)
+        box2 = (100, 100, 150, 150)
+        iou = detector._box_iou(box1, box2)
+        assert iou == 0.0
+        
+        # Partial overlap - 50% overlap
+        box1 = (0, 0, 100, 100)
+        box2 = (50, 0, 150, 100)
+        iou = detector._box_iou(box1, box2)
+        # Intersection: 50x100 = 5000
+        # Union: 10000 + 10000 - 5000 = 15000
+        # IoU: 5000/15000 = 0.333...
+        expected_iou = 5000 / 15000
+        assert abs(iou - expected_iou) < 1e-6
+
+    def test_merge_tta_boxes_perfect_match(self):
+        """Test merging boxes that perfectly match."""
+        detector = EAST(use_tta=True, tta_iou_thresh=0.1)
+        
+        # Same boxes in both views
+        boxes_orig = [((10, 10, 100, 50), 0.9)]
+        boxes_flipped = [((10, 10, 100, 50), 0.8)]
+        
+        merged = detector._merge_tta_boxes(boxes_orig, boxes_flipped)
+        
+        assert len(merged) == 1
+        box, score = merged[0]
+        assert box == (10, 10, 100, 50)
+        assert abs(score - 0.85) < 1e-6  # Average of 0.9 and 0.8
+
+    def test_merge_tta_boxes_no_match(self):
+        """Test merging boxes that don't match (no overlap)."""
+        detector = EAST(use_tta=True, tta_iou_thresh=0.1)
+        
+        # Non-overlapping boxes
+        boxes_orig = [((10, 10, 50, 50), 0.9)]
+        boxes_flipped = [((200, 200, 250, 250), 0.8)]
+        
+        merged = detector._merge_tta_boxes(boxes_orig, boxes_flipped)
+        
+        # No matches found - TTA returns only matched boxes
+        assert len(merged) == 0
+
+    def test_merge_tta_boxes_partial_overlap(self):
+        """Test merging boxes with partial overlap."""
+        detector = EAST(use_tta=True, tta_iou_thresh=0.1)
+        
+        # Overlapping boxes
+        boxes_orig = [((0, 0, 100, 100), 0.9)]
+        boxes_flipped = [((80, 10, 120, 90), 0.8)]  # Overlapping with different y
+        
+        # IoU = (20*80) / (100*100 + 40*80 - 20*80) = 1600 / (10000 + 3200 - 1600) = 1600/11600 ≈ 0.138
+        # This exceeds 0.1 threshold, so should merge
+        merged = detector._merge_tta_boxes(boxes_orig, boxes_flipped)
+        
+        assert len(merged) == 1
+        box, score = merged[0]
+        # Merged box: x extended, y from original
+        assert box == (0, 0, 120, 100)  # x: min(0,80)=0, max(100,120)=120, y from orig: 0, 100
+        assert abs(score - 0.85) < 1e-6
+
+    def test_tta_predict_runs_without_error(self):
+        """Test that predict with TTA runs without errors."""
+        detector = EAST(use_tta=True, tta_iou_thresh=0.1)
+        
+        # Create a simple test image
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Add some white rectangles to simulate text
+        img[100:150, 100:300] = 255
+        img[200:250, 150:350] = 255
+        
+        result = detector.predict(img)
+        
+        assert "page" in result
+        assert isinstance(result["page"], Page)
+
+    def test_tta_consistency(self):
+        """Test that TTA produces consistent results."""
+        detector = EAST(use_tta=True, score_thresh=0.5)
+        
+        np.random.seed(42)
+        img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        
+        result1 = detector.predict(img)
+        result2 = detector.predict(img)
+        
+        words1 = sum(len(line.words) for block in result1["page"].blocks for line in block.lines)
+        words2 = sum(len(line.words) for block in result2["page"].blocks for line in block.lines)
+        
+        assert words1 == words2
+
+    def test_tta_vs_no_tta(self):
+        """Test that TTA and non-TTA can produce different results."""
+        # This is more of a sanity check - TTA might or might not find more boxes
+        detector_tta = EAST(use_tta=True, score_thresh=0.5)
+        detector_no_tta = EAST(use_tta=False, score_thresh=0.5)
+        
+        # Create image with content
+        np.random.seed(42)
+        img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        
+        result_tta = detector_tta.predict(img)
+        result_no_tta = detector_no_tta.predict(img)
+        
+        # Both should return valid Page objects
+        assert isinstance(result_tta["page"], Page)
+        assert isinstance(result_no_tta["page"], Page)
+
+    def test_tta_with_axis_aligned_false(self):
+        """Test that TTA works correctly with axis_aligned_output=False."""
+        detector = EAST(use_tta=True, axis_aligned_output=False, score_thresh=0.5)
+        
+        # Create a simple test image
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        img[100:150, 100:300] = 255
+        
+        result = detector.predict(img)
+        
+        assert "page" in result
+        assert isinstance(result["page"], Page)
+        
+        # Check that polygons are preserved (not converted to axis-aligned rectangles)
+        # With axis_aligned_output=False, we should get the original 4-point polygons
+        for block in result["page"].blocks:
+            for line in block.lines:
+                for word in line.words:
+                    # Each polygon should have 4 points
+                    assert len(word.polygon) == 4
+                    # Each point should have 2 coordinates
+                    for point in word.polygon:
+                        assert len(point) == 2
+
+    def test_tta_axis_aligned_true_vs_false(self):
+        """Test that axis_aligned_output affects TTA output correctly."""
+        detector_aligned = EAST(use_tta=True, axis_aligned_output=True, score_thresh=0.5)
+        detector_not_aligned = EAST(use_tta=True, axis_aligned_output=False, score_thresh=0.5)
+        
+        # Create test image
+        np.random.seed(42)
+        img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        
+        result_aligned = detector_aligned.predict(img)
+        result_not_aligned = detector_not_aligned.predict(img)
+        
+        # Both should return valid results
+        assert isinstance(result_aligned["page"], Page)
+        assert isinstance(result_not_aligned["page"], Page)
+        
+        # Get all words from both results
+        def get_all_words(page):
+            return [word for block in page.blocks for line in block.lines for word in line.words]
+        
+        words_aligned = get_all_words(result_aligned["page"])
+        words_not_aligned = get_all_words(result_not_aligned["page"])
+        
+        # Should have the same number of words
+        assert len(words_aligned) == len(words_not_aligned)
+
+
+
 

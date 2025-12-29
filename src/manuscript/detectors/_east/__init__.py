@@ -90,6 +90,15 @@ class EAST(BaseModel):
     anomaly_min_box_count : int, optional
         Minimum number of boxes required before anomaly filtering.
         Default is 30.
+    use_tta : bool, optional
+        Enable Test-Time Augmentation (TTA). When enabled, inference is run
+        on both the original and horizontally flipped image, and results are
+        merged. This can improve detection of partially visible or edge text.
+        Default is False.
+    tta_iou_thresh : float, optional
+        IoU threshold for merging boxes from original and flipped images
+        during TTA. Boxes with IoU > threshold are considered matches and
+        merged. Default is 0.1.
 
     Notes
     -----
@@ -126,6 +135,8 @@ class EAST(BaseModel):
         remove_area_anomalies: bool = False,
         anomaly_sigma_threshold: float = 5.0,
         anomaly_min_box_count: int = 30,
+        use_tta: bool = False,
+        tta_iou_thresh: float = 0.1,
         **kwargs,
     ):
         super().__init__(weights=weights, device=device, **kwargs)
@@ -148,6 +159,10 @@ class EAST(BaseModel):
         self.remove_area_anomalies = remove_area_anomalies
         self.anomaly_sigma_threshold = anomaly_sigma_threshold
         self.anomaly_min_box_count = anomaly_min_box_count
+
+        # TTA parameters
+        self.use_tta = use_tta
+        self.tta_iou_thresh = tta_iou_thresh
 
     def _initialize_session(self):
         if self.onnx_session is not None:
@@ -263,6 +278,129 @@ class EAST(BaseModel):
             return quads
         return quads[keep]
 
+    @staticmethod
+    def _box_iou(
+        box1: Tuple[int, int, int, int], box2: Tuple[int, int, int, int]
+    ) -> float:
+        """
+        Calculate IoU between two axis-aligned boxes.
+
+        Parameters
+        ----------
+        box1, box2 : tuple of (x0, y0, x1, y1)
+            Bounding box coordinates.
+
+        Returns
+        -------
+        float
+            Intersection over Union value in [0, 1].
+        """
+        x0 = max(box1[0], box2[0])
+        y0 = max(box1[1], box2[1])
+        x1 = min(box1[2], box2[2])
+        y1 = min(box1[3], box2[3])
+
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+
+        inter = (x1 - x0) * (y1 - y0)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+
+        return inter / float(area1 + area2 - inter)
+
+    def _merge_tta_boxes(
+        self,
+        boxes_orig: List[Tuple[Tuple[int, int, int, int], float]],
+        boxes_flipped: List[Tuple[Tuple[int, int, int, int], float]],
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """
+        Merge detection boxes from original and horizontally flipped images.
+
+        For each box in the original image, find matching box in flipped image
+        (based on IoU threshold). Matched boxes are merged by extending x-coordinates
+        and keeping y-coordinates from original, with averaged scores.
+
+        This approach keeps vertical positioning stable while potentially
+        extending horizontal coverage when both views detect overlapping regions.
+
+        Parameters
+        ----------
+        boxes_orig : list of ((x0, y0, x1, y1), score)
+            Boxes from original image detection.
+        boxes_flipped : list of ((x0, y0, x1, y1), score)
+            Boxes from flipped image detection (already transformed back
+            to original coordinate space).
+
+        Returns
+        -------
+        list of ((x0, y0, x1, y1), score)
+            Merged boxes - only boxes that have matches in both views.
+        """
+        merged = []
+
+        for box1, score1 in boxes_orig:
+            for box2, score2 in boxes_flipped:
+                iou = self._box_iou(box1, box2)
+                if iou > self.tta_iou_thresh:
+                    # Merge: extend x-coordinates, keep y from original
+                    merged_box = (
+                        min(box1[0], box2[0]),  # x0: take minimum
+                        box1[1],                 # y0: keep from original
+                        max(box1[2], box2[2]),  # x1: take maximum
+                        box1[3],                 # y1: keep from original
+                    )
+                    avg_score = (score1 + score2) / 2
+                    merged.append((merged_box, avg_score))
+                    break  # Found match, move to next original box
+
+        return merged
+
+    def _run_inference_on_image(
+        self, img: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Run ONNX inference on a single image.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            RGB image with shape (H, W, 3).
+
+        Returns
+        -------
+        tuple of (final_quads_nms, score_map, geo_map)
+            Detected quads after NMS and raw maps.
+        """
+        resized = cv2.resize(img, (self.target_size, self.target_size))
+
+        img_norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
+        img_input = img_norm.transpose(2, 0, 1)[np.newaxis, :, :, :]
+
+        input_name = self.onnx_session.get_inputs()[0].name
+        output_names = [out.name for out in self.onnx_session.get_outputs()]
+
+        outputs = self.onnx_session.run(output_names, {input_name: img_input})
+
+        score_map = outputs[0].squeeze(0).squeeze(0)
+        geo_map = outputs[1].squeeze(0)
+
+        final_quads = decode_quads_from_maps(
+            score_map=score_map,
+            geo_map=geo_map.transpose(1, 2, 0),
+            score_thresh=self.score_thresh,
+            scale=1.0 / self.score_geo_scale,
+            quantization=self.quantization,
+        )
+
+        final_quads_nms = locality_aware_nms(
+            final_quads,
+            iou_threshold=self.iou_threshold,
+            iou_threshold_standard=self.iou_threshold_standard,
+        )
+
+        return final_quads_nms, score_map, geo_map
+
     def predict(
         self,
         img_or_path: Union[str, Path, np.ndarray],
@@ -317,6 +455,14 @@ class EAST(BaseModel):
         (4) quad decoding, (5) NMS, (6) box expansion, (7) scaling coordinates
         back to original size, (8) optional reading order sorting into lines.
 
+        **Test-Time Augmentation (TTA):**
+
+        When ``use_tta=True`` is set during initialization, the method runs
+        inference on both the original and horizontally flipped image, then
+        merges results. Boxes from both views are matched by IoU and merged
+        by taking the union of coordinates with averaged scores. This can
+        improve detection of text near image edges or partially visible text.
+
         For visualization, use the external ``visualize_page`` utility:
 
         >>> from manuscript.utils import visualize_page
@@ -350,44 +496,79 @@ class EAST(BaseModel):
             self._initialize_session()
 
         img = read_image(img_or_path)
-        resized = cv2.resize(img, (self.target_size, self.target_size))
-
-        img_norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
-        img_input = img_norm.transpose(2, 0, 1)[np.newaxis, :, :, :]
-
-        input_name = self.onnx_session.get_inputs()[0].name
-        output_names = [out.name for out in self.onnx_session.get_outputs()]
-
-        outputs = self.onnx_session.run(output_names, {input_name: img_input})
-
-        score_map = outputs[0].squeeze(0).squeeze(0)
-        geo_map = outputs[1].squeeze(0)
-
-        final_quads = decode_quads_from_maps(
-            score_map=score_map,
-            geo_map=geo_map.transpose(1, 2, 0),
-            score_thresh=self.score_thresh,
-            scale=1.0 / self.score_geo_scale,
-            quantization=self.quantization,
-        )
-
-        final_quads_nms = locality_aware_nms(
-            final_quads,
-            iou_threshold=self.iou_threshold,
-            iou_threshold_standard=self.iou_threshold_standard,
-        )
-
-        expanded = expand_boxes(
-            final_quads_nms,
-            expand_w=self.expand_ratio_w,
-            expand_h=self.expand_ratio_h,
-            expand_power=self.expand_power,
-        )
-
         orig_h, orig_w = img.shape[:2]
-        scaled_quads = self._scale_boxes_to_original(expanded, (orig_h, orig_w))
 
-        processed_quads = self._remove_fully_contained_boxes(scaled_quads)
+        # Run inference on original image
+        final_quads_nms, score_map, geo_map = self._run_inference_on_image(img)
+
+        # TTA: Run on horizontally flipped image and merge results
+        if self.use_tta:
+            # Flip image horizontally
+            img_flipped = np.fliplr(img).copy()
+            final_quads_flipped, _, _ = self._run_inference_on_image(img_flipped)
+
+            # Scale both to original size first
+            scaled_orig = self._scale_boxes_to_original(final_quads_nms, (orig_h, orig_w))
+            scaled_flipped = self._scale_boxes_to_original(final_quads_flipped, (orig_h, orig_w))
+
+            # Convert to axis-aligned boxes for IoU matching
+            # Keep track of original quads for non-axis-aligned output
+            boxes_orig = []
+            quads_orig_list = []  # Store original quads
+            for quad in scaled_orig:
+                pts = quad[:8].reshape(4, 2)
+                x0, y0 = pts.min(axis=0)
+                x1, y1 = pts.max(axis=0)
+                score = float(np.clip(quad[8], 0.0, 1.0))
+                boxes_orig.append(((int(x0), int(y0), int(x1), int(y1)), score))
+                quads_orig_list.append(quad.copy())
+
+            boxes_flipped = []
+            for quad in scaled_flipped:
+                pts = quad[:8].reshape(4, 2)
+                x0, y0 = pts.min(axis=0)
+                x1, y1 = pts.max(axis=0)
+                # Mirror x coordinates back
+                x0_mirrored = orig_w - x1
+                x1_mirrored = orig_w - x0
+                score = float(np.clip(quad[8], 0.0, 1.0))
+                boxes_flipped.append(((int(x0_mirrored), int(y0), int(x1_mirrored), int(y1)), score))
+
+            # Find which original boxes have matches in flipped view
+            matched_orig_indices = []
+            for idx, (box1, score1) in enumerate(boxes_orig):
+                for box2, score2 in boxes_flipped:
+                    iou = self._box_iou(box1, box2)
+                    if iou > self.tta_iou_thresh:
+                        matched_orig_indices.append(idx)
+                        break  # Found match, move to next original box
+
+            # Filter to keep only matched quads (preserves original 4-point polygons)
+            if matched_orig_indices:
+                matched_quads = np.stack(
+                    [quads_orig_list[i] for i in matched_orig_indices], axis=0
+                )
+            else:
+                matched_quads = np.empty((0, 9), dtype=np.float32)
+
+            # Expand boxes
+            expanded = expand_boxes(
+                matched_quads,
+                expand_w=self.expand_ratio_w,
+                expand_h=self.expand_ratio_h,
+                expand_power=self.expand_power,
+            )
+        else:
+            # No TTA: standard processing
+            expanded = expand_boxes(
+                final_quads_nms,
+                expand_w=self.expand_ratio_w,
+                expand_h=self.expand_ratio_h,
+                expand_power=self.expand_power,
+            )
+            expanded = self._scale_boxes_to_original(expanded, (orig_h, orig_w))
+
+        processed_quads = self._remove_fully_contained_boxes(expanded)
         processed_quads = self._remove_area_anomalies(processed_quads)
         output_quads = (
             self._convert_to_axis_aligned(processed_quads)

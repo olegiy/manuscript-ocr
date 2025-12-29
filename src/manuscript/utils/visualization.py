@@ -94,6 +94,8 @@ def visualize_page(
     color=(0, 255, 0),
     thickness=2,
     show_order=True,
+    show_lines=False,
+    show_numbers=False,
     line_color=(255, 165, 0),
     number_bg=(255, 255, 255),
     number_color=(0, 0, 0),
@@ -120,14 +122,15 @@ def visualize_page(
         RGB color for word boundaries.
     thickness : int, default=2
         Line thickness for word boundaries.
-    dark_alpha : float, default=0.3
-        Alpha for darkening background (0=no darkening, 1=fully dark).
-    blur_ksize : int, default=5
-        Gaussian blur kernel size (0=no blur, must be odd).
     show_order : bool, default=True
-        If True, display reading order with numbers and connecting lines.
-        Also colors different text lines with different colors and shows
+        If True, colors different text lines with different colors and shows
         semi-transparent block boundaries with different colors per block.
+    show_lines : bool, default=False
+        If True and show_order=True, draw connecting lines between consecutive
+        words showing the reading sequence.
+    show_numbers : bool, default=False
+        If True and show_order=True, display numbered markers on each word
+        showing the reading order.
     line_color : tuple of int, default=(255, 165, 0)
         RGB color for connecting lines between words.
     number_bg : tuple of int, default=(255, 255, 255)
@@ -168,6 +171,16 @@ def visualize_page(
     ...     show_order=True,
     ...     color=(255, 0, 0),
     ...     thickness=3
+    ... )
+
+    Show connecting lines and numbers between words:
+
+    >>> vis = visualize_page(
+    ...     "document.jpg",
+    ...     result["page"],
+    ...     show_order=True,
+    ...     show_lines=True,
+    ...     show_numbers=True
     ... )
     """
     # Load image using universal reader
@@ -244,10 +257,10 @@ def visualize_page(
         x2, y2 = pts[:, 0].max(), pts[:, 1].max()
         color_b = get_block_color(block_idx)
         cv2.rectangle(
-            block_layer, (int(x1), int(y1)), (int(x2), int(y2)), (*color_b, 50), -1
-        )  # alpha=50
-
-    # ----- WORD MASK (вырезаем слова из слоёв блоков) -----
+            block_layer, (int(x1), int(y1)), (int(x2), int(y2)), (*color_b, 75), -1
+        )  # alpha=75
+    
+    # ----- WORD MASK (cut out words from block layers) -----
     word_mask = np.zeros((h, w), dtype=np.uint8)
     for quads, _, _ in lines:
         for quad in quads:
@@ -256,10 +269,10 @@ def visualize_page(
 
     inv_word_mask = cv2.bitwise_not(word_mask)
 
-    # вырезаем слова → блоки НЕ покрывают слова
+     # cut out words → blocks DO NOT cover words
     block_layer[:, :, 3] = cv2.bitwise_and(block_layer[:, :, 3], inv_word_mask)
 
-    # готовое изображение
+    # final image
     base = Image.fromarray(img).convert("RGBA")
     block_img = Image.fromarray(block_layer, mode="RGBA")
     out = Image.alpha_composite(base, block_img).convert("RGB")
@@ -283,17 +296,21 @@ def visualize_page(
             ys = [p[1] * scale for p in w.polygon]
             centers.append((sum(xs) / 4, sum(ys) / 4))
 
-        for p, c in zip(centers, centers[1:]):
-            draw.line([p, c], fill=line_color, width=3)
+        # Draw connecting lines only if show_lines is True
+        if show_lines:
+            for p, c in zip(centers, centers[1:]):
+                draw.line([p, c], fill=line_color, width=3)
 
-        overlay = Image.new("RGBA", out.size, (0, 0, 0, 0))
-        d2 = ImageDraw.Draw(overlay)
-        for cx, cy in centers:
-            d2.rectangle([cx - 12, cy - 12, cx + 12, cy + 12], fill=number_bg + (140,))
-        out = Image.alpha_composite(out.convert("RGBA"), overlay).convert("RGB")
+        # Draw numbers only if show_numbers is True
+        if show_numbers:
+            overlay = Image.new("RGBA", out.size, (0, 0, 0, 0))
+            d2 = ImageDraw.Draw(overlay)
+            for cx, cy in centers:
+                d2.rectangle([cx - 12, cy - 12, cx + 12, cy + 12], fill=number_bg + (140,))
+            out = Image.alpha_composite(out.convert("RGBA"), overlay).convert("RGB")
 
-        draw = ImageDraw.Draw(out)
-        for i, (cx, cy) in enumerate(centers, 1):
-            draw.text((cx - 6, cy - 8), str(i), fill=number_color)
+            draw = ImageDraw.Draw(out)
+            for i, (cx, cy) in enumerate(centers, 1):
+                draw.text((cx - 6, cy - 8), str(i), fill=number_color)
 
     return out
