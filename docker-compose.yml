@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  manuscript-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+      - manuscript_models:/root/.cache/torch  # Сохраняем скачанные веса моделей
+    environment:
+      - CUDA_VISIBLE_DEVICES=0 # Используем GPU если доступно
+    # Если у вас нет GPU или возникают ошибки nvidia-container-cli,
+    # закомментируйте блок 'deploy' ниже:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    stdin_open: true
+    tty: true
+
+volumes:
+  manuscript_models:
